@@ -1,4 +1,4 @@
-## ProofRail API (SaaS core)
+## ProofRail Evidence API (SaaS core)
 
 FastAPI service for **audit-grade sanctions screening evidence packs**.
 
@@ -14,8 +14,8 @@ export PROOFRAIL_ADMIN_KEY="dev-admin"
 export PROOFRAIL_DB_PATH="./proofrail.db"
 export PROOFRAIL_STORE_DIR="./proofrail_store"
 
-proofrail-api --help
-proofrail-api
+proofrail-evidence-api --help
+proofrail-evidence-api
 ```
 
 ### Docker

@@ -3,7 +3,7 @@
  build-backend = "setuptools.build_meta"
  
  [project]
- name = "proofrail"
+name = "proofrail-evidence-api"
  version = "0.1.0"
 description = "Audit-grade sanctions screening evidence API."
 readme = "README.md"
@@ -29,6 +29,7 @@ api = [
 ]
  
  [project.scripts]
+proofrail-evidence-api = "ProofRail.service.app:main"
 proofrail-api = "ProofRail.service.app:main"
  
  [tool.setuptools]
