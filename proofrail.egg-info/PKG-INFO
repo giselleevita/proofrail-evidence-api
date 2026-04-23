@@ -1,0 +1,62 @@
+Metadata-Version: 2.4
+Name: proofrail
+Version: 0.1.0
+Summary: Audit-grade sanctions screening evidence API.
+Author: ProofRail contributors
+License: UNLICENSED
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: requests>=2.31
+Requires-Dist: fastapi>=0.112.0
+Requires-Dist: uvicorn>=0.30.0
+Provides-Extra: dev
+Requires-Dist: ruff>=0.6.0; extra == "dev"
+Requires-Dist: httpx>=0.27.0; extra == "dev"
+Provides-Extra: api
+Requires-Dist: fastapi>=0.112.0; extra == "api"
+Requires-Dist: uvicorn>=0.30.0; extra == "api"
+
+## ProofRail API (SaaS core)
+
+FastAPI service for **audit-grade sanctions screening evidence packs**.
+
+### Quickstart (venv)
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -U pip
+python -m pip install -e ".[dev]"
+
+export PROOFRAIL_ADMIN_KEY="dev-admin"
+export PROOFRAIL_DB_PATH="./proofrail.db"
+export PROOFRAIL_STORE_DIR="./proofrail_store"
+
+proofrail-api --help
+proofrail-api
+```
+
+### Docker
+
+```bash
+export PROOFRAIL_ADMIN_KEY="dev-admin"
+docker compose up --build
+```
+
+### Create an API key (admin)
+
+```bash
+curl -sS -X POST "http://localhost:8000/admin/keys" \
+  -H "x-admin-key: dev-admin" \
+  -H "content-type: application/json" \
+  -d '{"customer_id":"demo","scopes":["write:screen","read:evidence"]}'
+```
+
+### Screen a subject
+
+```bash
+curl -sS -X POST "http://localhost:8000/v1/screen" \
+  -H "x-api-key: <paste-key>" \
+  -H "content-type: application/json" \
+  -d '{"subject":{"name":"John Doe","country":"US"}}'
+```

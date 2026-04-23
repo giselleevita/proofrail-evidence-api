@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.ruff_cache/
+
+proofrail_store/
+*.db
+*.db-shm
+*.db-wal
+
+output/
+tmp/

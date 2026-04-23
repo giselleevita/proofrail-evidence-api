@@ -1,0 +1,16 @@
+services:
+  proofrail:
+    build: .
+    environment:
+      PROOFRAIL_ADMIN_KEY: "change-me"
+      PROOFRAIL_STORE_DIR: "/data/proofrail_store"
+      PROOFRAIL_DB_PATH: "/data/proofrail_store/proofrail.sqlite3"
+      PROOFRAIL_RPM: "120"
+    ports:
+      - "8000:8000"
+    volumes:
+      - proofrail_data:/data
+
+volumes:
+  proofrail_data:
+
