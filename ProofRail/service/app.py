@@ -25,6 +25,30 @@ from ProofRail.service.storage import EvidenceStore, canonical_json_bytes, sha25
 from ProofRail.service.utils import utc_now_iso
 
 
+class _ScreenCache:
+    def __init__(self, *, max_entries: int = 2048) -> None:
+        from collections import OrderedDict
+
+        self.max_entries = int(max_entries)
+        self._lock = threading.Lock()
+        self._data: OrderedDict[str, str] = OrderedDict()
+
+    def get(self, key: str) -> str | None:
+        with self._lock:
+            v = self._data.get(key)
+            if v is None:
+                return None
+            self._data.move_to_end(key)
+            return v
+
+    def set(self, key: str, value: str) -> None:
+        with self._lock:
+            self._data[key] = value
+            self._data.move_to_end(key)
+            while len(self._data) > self.max_entries:
+                self._data.popitem(last=False)
+
+
 class Subject(BaseModel):
     subject_id: str | None = None
     name: str = Field(min_length=1, max_length=512)
@@ -136,6 +160,17 @@ class VerifyEvidencePackResponse(BaseModel):
     valid: bool
 
 
+ERROR_RESPONSES = {
+    401: {"model": ErrorResponse},
+    403: {"model": ErrorResponse},
+    404: {"model": ErrorResponse},
+    409: {"model": ErrorResponse},
+    422: {"model": ErrorResponse},
+    429: {"model": ErrorResponse},
+    500: {"model": ErrorResponse},
+}
+
+
 def _error_payload(
     *,
     code: str,
@@ -167,6 +202,8 @@ def _error_response(
     )
     if request_id:
         resp.headers["x-request-id"] = request_id
+    if status_code == 429:
+        resp.headers.setdefault("retry-after", "1")
     return resp
 
 
@@ -201,7 +238,7 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
     global_ingest_key = "__global__"
 
     # Small in-process cache: screen_key -> evidence_pack_id
-    cache: dict[str, str] = {}
+    screen_cache = _ScreenCache(max_entries=int(os.environ.get("PROOFRAIL_SCREEN_CACHE_MAX", "2048")))
 
     # Rate limiting (per API key id)
     rpm = int(os.environ.get("PROOFRAIL_RPM", "120"))
@@ -291,9 +328,15 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
             if request.url.path.startswith("/v1/") and not request.url.path.startswith("/v1/admin/"):
                 api_key = request.headers.get("x-api-key")
                 if not api_key:
+                    anon_key = request.client.host if request.client else "unknown"
+                    if not limiter.allow(f"anon:{anon_key}"):
+                        return _error_response(status_code=429, code="rate_limited", request_id=request_id)
                     return _error_response(status_code=401, code="missing_api_key", request_id=request_id)
                 resolved = db.resolve_api_key(hash_api_key(api_key))
                 if resolved is None:
+                    anon_key = request.client.host if request.client else "unknown"
+                    if not limiter.allow(f"anon:{anon_key}"):
+                        return _error_response(status_code=429, code="rate_limited", request_id=request_id)
                     return _error_response(status_code=401, code="invalid_api_key", request_id=request_id)
                 api_key_id, customer_id, scopes = resolved
                 principal = ApiPrincipal(
@@ -351,6 +394,7 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
     @app.get(
         "/v1/evidence-packs/{evidence_pack_id}/signature",
         response_model=EvidencePackSignatureResponse,
+        responses=ERROR_RESPONSES,
     )
     def get_evidence_pack_signature(
         evidence_pack_id: str, principal: ApiPrincipal = Depends(principal_from_request)
@@ -375,7 +419,11 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
             signature=sign_bytes(signing_secret, payload),
         )
 
-    @app.post("/v1/evidence-packs/verify", response_model=VerifyEvidencePackResponse)
+    @app.post(
+        "/v1/evidence-packs/verify",
+        response_model=VerifyEvidencePackResponse,
+        responses=ERROR_RESPONSES,
+    )
     def verify_evidence_pack(
         req: VerifyEvidencePackRequest,
         principal: ApiPrincipal = Depends(principal_from_request),
@@ -388,7 +436,12 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
         payload = canonical_json_bytes(req.evidence_pack)
         return VerifyEvidencePackResponse(valid=verify_bytes(signing_secret, payload, req.signature))
 
-    @app.post("/v1/admin/keys", response_model=CreateKeyResponse, dependencies=[Depends(require_admin)])
+    @app.post(
+        "/v1/admin/keys",
+        response_model=CreateKeyResponse,
+        dependencies=[Depends(require_admin)],
+        responses=ERROR_RESPONSES,
+    )
     def admin_create_key(req: CreateKeyRequest) -> CreateKeyResponse:
         # Create customer if not exists, then create key.
         db.ensure_customer(req.customer_id, utc_now_iso())
@@ -401,12 +454,21 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
             customer_id=req.customer_id, api_key_id=api_key_id, api_key=api_key, scopes=req.scopes
         )
 
-    @app.post("/v1/admin/keys/revoke", dependencies=[Depends(require_admin)])
+    @app.post(
+        "/v1/admin/keys/revoke",
+        dependencies=[Depends(require_admin)],
+        responses=ERROR_RESPONSES,
+    )
     def admin_revoke_key(req: RevokeKeyRequest) -> dict[str, str]:
         db.revoke_api_key(req.api_key_id, utc_now_iso())
         return {"status": "revoked"}
 
-    @app.post("/v1/admin/keys/rotate", response_model=CreateKeyResponse, dependencies=[Depends(require_admin)])
+    @app.post(
+        "/v1/admin/keys/rotate",
+        response_model=CreateKeyResponse,
+        dependencies=[Depends(require_admin)],
+        responses=ERROR_RESPONSES,
+    )
     def admin_rotate_key(req: RotateKeyRequest) -> CreateKeyResponse:
         # Rotation creates a new key; caller can revoke old ones separately.
         db.ensure_customer(req.customer_id, utc_now_iso())
@@ -465,13 +527,7 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
     @app.post(
         "/v1/sanctions/screen",
         response_model=ScreenResponse,
-        responses={
-            401: {"model": ErrorResponse},
-            403: {"model": ErrorResponse},
-            429: {"model": ErrorResponse},
-            422: {"model": ErrorResponse},
-            500: {"model": ErrorResponse},
-        },
+        responses=ERROR_RESPONSES,
     )
     def sanctions_screen(req: ScreenRequest, principal: ApiPrincipal = Depends(principal_from_request)) -> ScreenResponse:
         if "write:screen" not in principal.scopes:
@@ -492,8 +548,9 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
             list_version=list_version,
             subject={"customer_id": principal.customer_id, "subject": req.subject.model_dump()},
         )
-        if screen_key in cache and store.has_pack(cache[screen_key]):
-            evidence_pack_id = cache[screen_key]
+        cached = screen_cache.get(screen_key)
+        if cached is not None and store.has_pack(cached):
+            evidence_pack_id = cached
         else:
             artifact_dict = artifact.to_dict()
             result_dict = {"decision": result.decision, "hits": result.hits, "name_norm": result.name_norm}
@@ -514,7 +571,7 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
                 },
             }
             evidence_pack_id = store.put_pack(pack).evidence_pack_id
-            cache[screen_key] = evidence_pack_id
+            screen_cache.set(screen_key, evidence_pack_id)
 
         decision: Decision = result.decision
         return ScreenResponse(
@@ -527,13 +584,7 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
     @app.get(
         "/v1/evidence-packs/{evidence_pack_id}",
         response_model=EvidencePack,
-        responses={
-            401: {"model": ErrorResponse},
-            403: {"model": ErrorResponse},
-            404: {"model": ErrorResponse},
-            422: {"model": ErrorResponse},
-            500: {"model": ErrorResponse},
-        },
+        responses=ERROR_RESPONSES,
     )
     def get_evidence_pack(
         evidence_pack_id: str, principal: ApiPrincipal = Depends(principal_from_request)
