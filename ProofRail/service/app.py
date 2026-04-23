@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import os
+import queue
 import threading
 import time
 import uuid
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
@@ -16,6 +18,7 @@ from ProofRail.service.auth import ApiPrincipal, generate_api_key, hash_api_key,
 from ProofRail.service.cache import IngestionCache
 from ProofRail.service.db import DbConfig, ProofRailDb
 from ProofRail.service.ingestion import ingest_sources
+from ProofRail.service.metrics import UsageEvent
 from ProofRail.service.models import Decision
 from ProofRail.service.ratelimit import RateLimiter
 from ProofRail.service.scheduler import RefreshScheduler
@@ -249,6 +252,75 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
     scheduler = RefreshScheduler()
     name_sets_cache = NameSetCache(max_entries=64)
 
+    usage_queue: queue.Queue[UsageEvent] = queue.Queue(maxsize=int(os.environ.get("PROOFRAIL_USAGE_QUEUE_MAX", "50000")))
+    usage_batch_size = int(os.environ.get("PROOFRAIL_USAGE_BATCH_SIZE", "200"))
+    usage_flush_interval_s = float(os.environ.get("PROOFRAIL_USAGE_FLUSH_INTERVAL_S", "1.0"))
+    usage_stop = threading.Event()
+
+    def usage_flusher() -> None:
+        batch: list[UsageEvent] = []
+        last_flush = time.time()
+        while not usage_stop.is_set():
+            timeout = max(0.05, usage_flush_interval_s - (time.time() - last_flush))
+            try:
+                ev = usage_queue.get(timeout=timeout)
+                batch.append(ev)
+            except queue.Empty:
+                pass
+
+            should_flush = len(batch) >= usage_batch_size or (batch and (time.time() - last_flush) >= usage_flush_interval_s)
+            if not should_flush:
+                continue
+
+            payloads = [
+                {
+                    "ts": e.ts,
+                    "api_key_id": e.api_key_id,
+                    "customer_id": e.customer_id,
+                    "route": e.route,
+                    "status_code": e.status_code,
+                    "latency_ms": e.latency_ms,
+                    "request_id": e.request_id,
+                }
+                for e in batch
+            ]
+            try:
+                db.insert_usage_events(payloads)
+            except Exception:
+                # Best-effort; drop on error to keep request path safe.
+                pass
+            batch.clear()
+            last_flush = time.time()
+
+        # Final best-effort flush on shutdown
+        if batch:
+            try:
+                db.insert_usage_events(
+                    [
+                        {
+                            "ts": e.ts,
+                            "api_key_id": e.api_key_id,
+                            "customer_id": e.customer_id,
+                            "route": e.route,
+                            "status_code": e.status_code,
+                            "latency_ms": e.latency_ms,
+                            "request_id": e.request_id,
+                        }
+                        for e in batch
+                    ]
+                )
+            except Exception:
+                pass
+
+    @app.on_event("startup")
+    def _start_usage_flusher() -> None:
+        t = threading.Thread(target=usage_flusher, daemon=True)
+        t.start()
+
+    @app.on_event("shutdown")
+    def _stop_usage_flusher() -> None:
+        usage_stop.set()
+
     def require_admin(x_admin_key: str | None = Header(default=None)) -> None:
         if admin_key is None:
             _raise_http_error(status_code=503, code="admin_not_configured")
@@ -366,15 +438,78 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
         response.headers["x-request-id"] = request_id
         response.headers["x-proofrail-latency-ms"] = f"{duration_ms:.2f}"
         if principal is not None and request.url.path.startswith("/v1/") and not request.url.path.startswith("/v1/admin/"):
-            db.insert_usage_event(
-                ts=utc_now_iso(),
-                api_key_id=principal.api_key_id,
-                customer_id=principal.customer_id,
-                route=request.url.path,
-                status_code=getattr(response, "status_code", 0),
-                latency_ms=duration_ms,
-            )
+            try:
+                usage_queue.put_nowait(
+                    UsageEvent(
+                        ts=utc_now_iso(),
+                        api_key_id=principal.api_key_id,
+                        customer_id=principal.customer_id,
+                        route=request.url.path,
+                        status_code=int(getattr(response, "status_code", 0)),
+                        latency_ms=float(duration_ms),
+                        request_id=request_id,
+                    )
+                )
+            except queue.Full:
+                pass
         return response
+
+    def _parse_iso_z(ts: str) -> datetime:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+
+    def _gc_raw_fetches(*, cutoff: datetime, customer_id: str | None, dry_run: bool) -> int:
+        root = raw_dir / (customer_id or "")
+        if not root.exists():
+            return 0
+        deleted = 0
+        for p in root.rglob("*"):
+            try:
+                if not p.is_file():
+                    continue
+                mtime = datetime.fromtimestamp(p.stat().st_mtime, tz=UTC)
+                if mtime >= cutoff:
+                    continue
+                if not dry_run:
+                    p.unlink()
+                deleted += 1
+            except Exception:
+                continue
+        return deleted
+
+    @app.post("/v1/admin/gc/run", dependencies=[Depends(require_admin)], responses=ERROR_RESPONSES)
+    def admin_gc_run(
+        customer_id: str | None = None,
+        dry_run: bool = True,
+        usage_retention_days: int | None = None,
+        evidence_retention_days: int | None = None,
+    ) -> dict[str, Any]:
+        now = datetime.now(UTC)
+        usage_days = int(usage_retention_days or os.environ.get("PROOFRAIL_USAGE_RETENTION_DAYS", "30"))
+        if customer_id is not None:
+            plan = db.get_plan(customer_id)
+            plan_days = int(plan["evidence_retention_days"]) if plan else None
+            evidence_days = int(evidence_retention_days or plan_days or os.environ.get("PROOFRAIL_EVIDENCE_RETENTION_DAYS", "30"))
+        else:
+            evidence_days = int(evidence_retention_days or os.environ.get("PROOFRAIL_EVIDENCE_RETENTION_DAYS", "30"))
+
+        usage_cutoff = now - timedelta(days=usage_days)
+        evidence_cutoff = now - timedelta(days=evidence_days)
+
+        deleted_usage = 0 if dry_run else db.delete_usage_events_before(usage_cutoff.replace(microsecond=0).isoformat().replace("+00:00", "Z"))
+        deleted_packs = store.delete_packs_before(cutoff=evidence_cutoff, customer_id=customer_id, dry_run=dry_run)
+        deleted_raw = _gc_raw_fetches(cutoff=evidence_cutoff, customer_id=customer_id, dry_run=dry_run)
+
+        return {
+            "dry_run": bool(dry_run),
+            "customer_id": customer_id,
+            "usage_retention_days": usage_days,
+            "evidence_retention_days": evidence_days,
+            "deleted": {
+                "usage_events": deleted_usage,
+                "evidence_packs": deleted_packs,
+                "raw_fetch_files": deleted_raw,
+            },
+        }
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:

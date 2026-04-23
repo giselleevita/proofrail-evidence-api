@@ -11,4 +11,5 @@ class UsageEvent:
     status_code: int
     latency_ms: float
     ts: str
+    request_id: str | None = None
 
