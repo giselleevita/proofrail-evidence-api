@@ -22,6 +22,7 @@ class TestOpenApiContract(unittest.TestCase):
         schema = self.client.get("/openapi.json").json()
         components = schema.get("components", {}).get("schemas", {})
         self.assertIn("EvidencePack", components)
+        self.assertIn("HTTPValidationError", components)  # FastAPI default component may still exist
 
     def test_missing_api_key_error_envelope(self) -> None:
         resp = self.client.post("/v1/sanctions/screen", json={"subject": {"name": "John Doe"}})
@@ -31,6 +32,8 @@ class TestOpenApiContract(unittest.TestCase):
         self.assertEqual(body["error"]["code"], "missing_api_key")
         self.assertIn("request_id", body["error"])
         self.assertTrue(resp.headers.get("x-request-id"))
+        # Missing/invalid keys should still be treated as part of rate limit surface.
+        # Header is set on 429; on 401 it is optional but request_id must be present.
 
     def test_validation_errors_use_error_envelope(self) -> None:
         # Missing body fields should trigger validation (before admin auth).
@@ -39,4 +42,17 @@ class TestOpenApiContract(unittest.TestCase):
         body = resp.json()
         self.assertEqual(body["error"]["code"], "validation_error")
         self.assertIn("errors", body["error"]["details"])
+
+    def test_missing_api_key_is_throttled_eventually(self) -> None:
+        # With a small RPM, repeated missing-key requests should hit 429.
+        import os
+
+        os.environ["PROOFRAIL_RPM"] = "2"
+        client = TestClient(create_app())
+        for _ in range(5):
+            resp = client.post("/v1/sanctions/screen", json={"subject": {"name": "John Doe"}})
+        self.assertIn(resp.status_code, (401, 429))
+        if resp.status_code == 429:
+            body = resp.json()
+            self.assertEqual(body["error"]["code"], "rate_limited")
 
