@@ -5,6 +5,7 @@ import queue
 import threading
 import time
 import uuid
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
@@ -224,7 +225,7 @@ def _raise_http_error(
 
 
 def create_app(*, ingest_func=ingest_sources) -> FastAPI:
-    app = FastAPI(title="ProofRail API", version="0.1.0")
+    app: FastAPI  # forward for lifespan closure
 
     store_root = Path(os.environ.get("PROOFRAIL_STORE_DIR", "proofrail_store"))
     raw_dir = Path(os.environ.get("PROOFRAIL_RAW_DIR", str(store_root / "raw_fetches")))
@@ -256,6 +257,7 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
     usage_batch_size = int(os.environ.get("PROOFRAIL_USAGE_BATCH_SIZE", "200"))
     usage_flush_interval_s = float(os.environ.get("PROOFRAIL_USAGE_FLUSH_INTERVAL_S", "1.0"))
     usage_stop = threading.Event()
+    usage_thread: threading.Thread | None = None
 
     def usage_flusher() -> None:
         batch: list[UsageEvent] = []
@@ -312,14 +314,19 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
             except Exception:
                 pass
 
-    @app.on_event("startup")
-    def _start_usage_flusher() -> None:
-        t = threading.Thread(target=usage_flusher, daemon=True)
-        t.start()
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        nonlocal usage_thread
+        usage_thread = threading.Thread(target=usage_flusher, daemon=True)
+        usage_thread.start()
+        try:
+            yield
+        finally:
+            usage_stop.set()
+            if usage_thread is not None:
+                usage_thread.join(timeout=2.0)
 
-    @app.on_event("shutdown")
-    def _stop_usage_flusher() -> None:
-        usage_stop.set()
+    app = FastAPI(title="ProofRail API", version="0.1.0", lifespan=lifespan)
 
     def require_admin(x_admin_key: str | None = Header(default=None)) -> None:
         if admin_key is None:
@@ -498,6 +505,7 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
         deleted_usage = 0 if dry_run else db.delete_usage_events_before(usage_cutoff.replace(microsecond=0).isoformat().replace("+00:00", "Z"))
         deleted_packs = store.delete_packs_before(cutoff=evidence_cutoff, customer_id=customer_id, dry_run=dry_run)
         deleted_raw = _gc_raw_fetches(cutoff=evidence_cutoff, customer_id=customer_id, dry_run=dry_run)
+        deleted_blobs = store.delete_unreferenced_blobs(cutoff=evidence_cutoff, dry_run=dry_run)
 
         return {
             "dry_run": bool(dry_run),
@@ -508,12 +516,27 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
                 "usage_events": deleted_usage,
                 "evidence_packs": deleted_packs,
                 "raw_fetch_files": deleted_raw,
+                "unreferenced_blobs": deleted_blobs,
             },
         }
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/readyz", responses=ERROR_RESPONSES)
+    def readyz() -> dict[str, str]:
+        try:
+            # DB ping
+            with db._connect() as con:  # noqa: SLF001
+                con.execute("SELECT 1").fetchone()
+            # Store dir write check
+            probe = store_root / ".readyz"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink(missing_ok=True)
+        except Exception:
+            _raise_http_error(status_code=503, code="not_ready")
+        return {"status": "ready"}
 
     @app.get("/v1/usage/summary")
     # response_model dict is fine here; keep simple for SDKs.

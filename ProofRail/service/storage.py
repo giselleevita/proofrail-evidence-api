@@ -50,6 +50,16 @@ class EvidenceStore:
         path = self.blobs_dir / f"{digest}.bin"
         return path.read_bytes()
 
+    def has_blob(self, digest: str) -> bool:
+        return (self.blobs_dir / f"{digest}.bin").exists()
+
+    def delete_blob(self, digest: str) -> bool:
+        path = self.blobs_dir / f"{digest}.bin"
+        if not path.exists():
+            return False
+        path.unlink()
+        return True
+
     def evidence_pack_path(self, evidence_pack_id: str) -> Path:
         return self.packs_dir / f"{evidence_pack_id}.json"
 
@@ -104,6 +114,59 @@ class EvidenceStore:
                 dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
                 if dt >= cutoff:
                     continue
+                if not dry_run:
+                    path.unlink()
+                deleted += 1
+            except Exception:
+                continue
+        return deleted
+
+    def referenced_blob_digests(self) -> set[str]:
+        """Best-effort reference scan: extracts blob digests from packs' ingestion metadata."""
+        digests: set[str] = set()
+        for path in self.packs_dir.glob("*.json"):
+            try:
+                evidence_pack_id = path.stem
+                payload = path.read_bytes()
+                if sha256_hex(payload) != evidence_pack_id:
+                    continue
+                pack = json.loads(payload.decode("utf-8"))
+                ingestion = pack.get("ingestion")
+                if isinstance(ingestion, dict):
+                    sha = ingestion.get("normalized_name_sets_blob_sha256")
+                    if isinstance(sha, str) and sha:
+                        digests.add(sha)
+                    sources = ingestion.get("sources")
+                    if isinstance(sources, list):
+                        for s in sources:
+                            if not isinstance(s, dict):
+                                continue
+                            blob = s.get("content_blob_sha256")
+                            if isinstance(blob, str) and blob:
+                                digests.add(blob)
+            except Exception:
+                continue
+        return digests
+
+    def delete_unreferenced_blobs(
+        self,
+        *,
+        referenced: set[str] | None = None,
+        cutoff: datetime | None = None,
+        dry_run: bool = False,
+    ) -> int:
+        """Delete blobs not referenced by any pack (optionally only if older than cutoff)."""
+        referenced = referenced or self.referenced_blob_digests()
+        deleted = 0
+        for path in self.blobs_dir.glob("*.bin"):
+            digest = path.stem
+            if digest in referenced:
+                continue
+            try:
+                if cutoff is not None:
+                    mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=cutoff.tzinfo)
+                    if mtime >= cutoff:
+                        continue
                 if not dry_run:
                     path.unlink()
                 deleted += 1

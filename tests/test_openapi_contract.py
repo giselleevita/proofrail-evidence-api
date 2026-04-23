@@ -24,6 +24,11 @@ class TestOpenApiContract(unittest.TestCase):
         self.assertIn("EvidencePack", components)
         self.assertIn("HTTPValidationError", components)  # FastAPI default component may still exist
 
+    def test_readyz(self) -> None:
+        resp = self.client.get("/readyz")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json(), {"status": "ready"})
+
     def test_missing_api_key_error_envelope(self) -> None:
         resp = self.client.post("/v1/sanctions/screen", json={"subject": {"name": "John Doe"}})
         self.assertEqual(resp.status_code, 401)
