@@ -270,6 +270,16 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
             details={"errors": exc.errors()},
         )
 
+    @app.exception_handler(Exception)
+    async def unhandled_exception_handler(request: Request, exc: Exception):
+        request_id = getattr(request.state, "request_id", None)
+        return _error_response(
+            status_code=500,
+            code="internal_error",
+            message="internal_error",
+            request_id=request_id,
+        )
+
     @app.middleware("http")
     async def request_log_and_limits(request: Request, call_next):
         request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
@@ -349,7 +359,12 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
             _raise_http_error(status_code=403, code="missing_scope")
         if not store.has_pack(evidence_pack_id):
             _raise_http_error(status_code=404, code="evidence_pack_not_found")
-        pack = store.get_pack(evidence_pack_id)
+        try:
+            pack = store.get_pack(evidence_pack_id)
+        except ValueError as exc:
+            if str(exc) == "evidence_pack_integrity_failed":
+                _raise_http_error(status_code=409, code="evidence_pack_integrity_failed")
+            raise
         if pack.get("customer_id") != principal.customer_id:
             _raise_http_error(status_code=404, code="evidence_pack_not_found")
         if not signing_secret:
@@ -527,7 +542,12 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
             _raise_http_error(status_code=403, code="missing_scope")
         if not store.has_pack(evidence_pack_id):
             _raise_http_error(status_code=404, code="evidence_pack_not_found")
-        pack = store.get_pack(evidence_pack_id)
+        try:
+            pack = store.get_pack(evidence_pack_id)
+        except ValueError as exc:
+            if str(exc) == "evidence_pack_integrity_failed":
+                _raise_http_error(status_code=409, code="evidence_pack_integrity_failed")
+            raise
         if pack.get("customer_id") != principal.customer_id:
             _raise_http_error(status_code=404, code="evidence_pack_not_found")
         return EvidencePack.model_validate(pack)

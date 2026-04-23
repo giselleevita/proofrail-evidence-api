@@ -28,7 +28,7 @@ docker compose up --build
 ### Create an API key (admin)
 
 ```bash
-curl -sS -X POST "http://localhost:8000/admin/keys" \
+curl -sS -X POST "http://localhost:8000/v1/admin/keys" \
   -H "x-admin-key: dev-admin" \
   -H "content-type: application/json" \
   -d '{"customer_id":"demo","scopes":["write:screen","read:evidence"]}'
@@ -37,7 +37,7 @@ curl -sS -X POST "http://localhost:8000/admin/keys" \
 ### Screen a subject
 
 ```bash
-curl -sS -X POST "http://localhost:8000/v1/screen" \
+curl -sS -X POST "http://localhost:8000/v1/sanctions/screen" \
   -H "x-api-key: <paste-key>" \
   -H "content-type: application/json" \
   -d '{"subject":{"name":"John Doe","country":"US"}}'
