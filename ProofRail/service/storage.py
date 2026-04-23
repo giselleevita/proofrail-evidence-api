@@ -65,4 +65,8 @@ class EvidenceStore:
 
     def get_pack(self, evidence_pack_id: str) -> dict[str, Any]:
         path = self.evidence_pack_path(evidence_pack_id)
-        return json.loads(path.read_text(encoding="utf-8"))
+        payload = path.read_bytes()
+        digest = sha256_hex(payload)
+        if digest != evidence_pack_id:
+            raise ValueError("evidence_pack_integrity_failed")
+        return json.loads(payload.decode("utf-8"))
