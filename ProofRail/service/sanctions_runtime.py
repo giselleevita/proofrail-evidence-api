@@ -8,4 +8,3 @@ callers/tests that still import from this module.
 from ProofRail.service.ingestion import ingest_sources as ingest_sources
 from ProofRail.service.screening import compute_screening_key as compute_screening_key
 from ProofRail.service.screening import screen_subject_name as screen_subject_name
-

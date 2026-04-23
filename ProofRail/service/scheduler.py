@@ -38,4 +38,3 @@ class RefreshScheduler:
             if ev is not None:
                 ev.set()
             self._threads.pop(customer_id, None)
-

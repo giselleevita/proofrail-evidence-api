@@ -76,8 +76,12 @@ class ProofRailDb:
             # Back-compat migration for older SQLite files (best-effort).
             cols = {row["name"] for row in con.execute("PRAGMA table_info(api_keys)").fetchall()}
             if "scopes" not in cols:
-                con.execute("ALTER TABLE api_keys ADD COLUMN scopes TEXT NOT NULL DEFAULT 'write:screen,read:evidence'")
-            usage_cols = {row["name"] for row in con.execute("PRAGMA table_info(usage_events)").fetchall()}
+                con.execute(
+                    "ALTER TABLE api_keys ADD COLUMN scopes TEXT NOT NULL DEFAULT 'write:screen,read:evidence'"
+                )
+            usage_cols = {
+                row["name"] for row in con.execute("PRAGMA table_info(usage_events)").fetchall()
+            }
             if "request_id" not in usage_cols:
                 con.execute("ALTER TABLE usage_events ADD COLUMN request_id TEXT NULL")
 
@@ -129,7 +133,15 @@ class ProofRailDb:
             con.execute(
                 "INSERT INTO usage_events(ts, api_key_id, customer_id, route, status_code, latency_ms, request_id) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (ts, api_key_id, customer_id, route, int(status_code), float(latency_ms), request_id),
+                (
+                    ts,
+                    api_key_id,
+                    customer_id,
+                    route,
+                    int(status_code),
+                    float(latency_ms),
+                    request_id,
+                ),
             )
 
     def insert_usage_events(self, events: list[dict[str, object]]) -> None:
@@ -195,4 +207,3 @@ class ProofRailDb:
                 "rpm": int(row["rpm"]),
                 "evidence_retention_days": int(row["evidence_retention_days"]),
             }
-

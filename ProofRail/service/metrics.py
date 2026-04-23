@@ -12,4 +12,3 @@ class UsageEvent:
     latency_ms: float
     ts: str
     request_id: str | None = None
-

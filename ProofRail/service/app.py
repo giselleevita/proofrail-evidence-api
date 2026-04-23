@@ -242,7 +242,9 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
     global_ingest_key = "__global__"
 
     # Small in-process cache: screen_key -> evidence_pack_id
-    screen_cache = _ScreenCache(max_entries=int(os.environ.get("PROOFRAIL_SCREEN_CACHE_MAX", "2048")))
+    screen_cache = _ScreenCache(
+        max_entries=int(os.environ.get("PROOFRAIL_SCREEN_CACHE_MAX", "2048"))
+    )
 
     # Rate limiting (per API key id)
     rpm = int(os.environ.get("PROOFRAIL_RPM", "120"))
@@ -253,7 +255,9 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
     scheduler = RefreshScheduler()
     name_sets_cache = NameSetCache(max_entries=64)
 
-    usage_queue: queue.Queue[UsageEvent] = queue.Queue(maxsize=int(os.environ.get("PROOFRAIL_USAGE_QUEUE_MAX", "50000")))
+    usage_queue: queue.Queue[UsageEvent] = queue.Queue(
+        maxsize=int(os.environ.get("PROOFRAIL_USAGE_QUEUE_MAX", "50000"))
+    )
     usage_batch_size = int(os.environ.get("PROOFRAIL_USAGE_BATCH_SIZE", "200"))
     usage_flush_interval_s = float(os.environ.get("PROOFRAIL_USAGE_FLUSH_INTERVAL_S", "1.0"))
     usage_stop = threading.Event()
@@ -270,7 +274,9 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
             except queue.Empty:
                 pass
 
-            should_flush = len(batch) >= usage_batch_size or (batch and (time.time() - last_flush) >= usage_flush_interval_s)
+            should_flush = len(batch) >= usage_batch_size or (
+                batch and (time.time() - last_flush) >= usage_flush_interval_s
+            )
             if not should_flush:
                 continue
 
@@ -404,19 +410,29 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
         principal: ApiPrincipal | None = None
         try:
             # Only enforce rate limiting on /v1/* endpoints that are not admin routes.
-            if request.url.path.startswith("/v1/") and not request.url.path.startswith("/v1/admin/"):
+            if request.url.path.startswith("/v1/") and not request.url.path.startswith(
+                "/v1/admin/"
+            ):
                 api_key = request.headers.get("x-api-key")
                 if not api_key:
                     anon_key = request.client.host if request.client else "unknown"
                     if not limiter.allow(f"anon:{anon_key}"):
-                        return _error_response(status_code=429, code="rate_limited", request_id=request_id)
-                    return _error_response(status_code=401, code="missing_api_key", request_id=request_id)
+                        return _error_response(
+                            status_code=429, code="rate_limited", request_id=request_id
+                        )
+                    return _error_response(
+                        status_code=401, code="missing_api_key", request_id=request_id
+                    )
                 resolved = db.resolve_api_key(hash_api_key(api_key))
                 if resolved is None:
                     anon_key = request.client.host if request.client else "unknown"
                     if not limiter.allow(f"anon:{anon_key}"):
-                        return _error_response(status_code=429, code="rate_limited", request_id=request_id)
-                    return _error_response(status_code=401, code="invalid_api_key", request_id=request_id)
+                        return _error_response(
+                            status_code=429, code="rate_limited", request_id=request_id
+                        )
+                    return _error_response(
+                        status_code=401, code="invalid_api_key", request_id=request_id
+                    )
                 api_key_id, customer_id, scopes = resolved
                 principal = ApiPrincipal(
                     customer_id=customer_id, api_key_id=api_key_id, scopes=parse_scopes(scopes)
@@ -430,13 +446,18 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
                 else:
                     with limiter_lock:
                         effective_limiter = limiter_by_customer.get(customer_id)
-                        if effective_limiter is None or int(effective_limiter.capacity) != effective_rpm:
+                        if (
+                            effective_limiter is None
+                            or int(effective_limiter.capacity) != effective_rpm
+                        ):
                             effective_limiter = RateLimiter(
                                 capacity=effective_rpm, refill_per_s=effective_rpm / 60.0
                             )
                             limiter_by_customer[customer_id] = effective_limiter
                 if not effective_limiter.allow(api_key_id):
-                    return _error_response(status_code=429, code="rate_limited", request_id=request_id)
+                    return _error_response(
+                        status_code=429, code="rate_limited", request_id=request_id
+                    )
             response = await call_next(request)
         except HTTPException as exc:
             response = await http_exception_handler(request, exc)
@@ -444,7 +465,11 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
         duration_ms = (time.perf_counter() - t0) * 1000.0
         response.headers["x-request-id"] = request_id
         response.headers["x-proofrail-latency-ms"] = f"{duration_ms:.2f}"
-        if principal is not None and request.url.path.startswith("/v1/") and not request.url.path.startswith("/v1/admin/"):
+        if (
+            principal is not None
+            and request.url.path.startswith("/v1/")
+            and not request.url.path.startswith("/v1/admin/")
+        ):
             try:
                 usage_queue.put_nowait(
                     UsageEvent(
@@ -491,20 +516,38 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
         evidence_retention_days: int | None = None,
     ) -> dict[str, Any]:
         now = datetime.now(UTC)
-        usage_days = int(usage_retention_days or os.environ.get("PROOFRAIL_USAGE_RETENTION_DAYS", "30"))
+        usage_days = int(
+            usage_retention_days or os.environ.get("PROOFRAIL_USAGE_RETENTION_DAYS", "30")
+        )
         if customer_id is not None:
             plan = db.get_plan(customer_id)
             plan_days = int(plan["evidence_retention_days"]) if plan else None
-            evidence_days = int(evidence_retention_days or plan_days or os.environ.get("PROOFRAIL_EVIDENCE_RETENTION_DAYS", "30"))
+            evidence_days = int(
+                evidence_retention_days
+                or plan_days
+                or os.environ.get("PROOFRAIL_EVIDENCE_RETENTION_DAYS", "30")
+            )
         else:
-            evidence_days = int(evidence_retention_days or os.environ.get("PROOFRAIL_EVIDENCE_RETENTION_DAYS", "30"))
+            evidence_days = int(
+                evidence_retention_days or os.environ.get("PROOFRAIL_EVIDENCE_RETENTION_DAYS", "30")
+            )
 
         usage_cutoff = now - timedelta(days=usage_days)
         evidence_cutoff = now - timedelta(days=evidence_days)
 
-        deleted_usage = 0 if dry_run else db.delete_usage_events_before(usage_cutoff.replace(microsecond=0).isoformat().replace("+00:00", "Z"))
-        deleted_packs = store.delete_packs_before(cutoff=evidence_cutoff, customer_id=customer_id, dry_run=dry_run)
-        deleted_raw = _gc_raw_fetches(cutoff=evidence_cutoff, customer_id=customer_id, dry_run=dry_run)
+        deleted_usage = (
+            0
+            if dry_run
+            else db.delete_usage_events_before(
+                usage_cutoff.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            )
+        )
+        deleted_packs = store.delete_packs_before(
+            cutoff=evidence_cutoff, customer_id=customer_id, dry_run=dry_run
+        )
+        deleted_raw = _gc_raw_fetches(
+            cutoff=evidence_cutoff, customer_id=customer_id, dry_run=dry_run
+        )
         deleted_blobs = store.delete_unreferenced_blobs(cutoff=evidence_cutoff, dry_run=dry_run)
 
         return {
@@ -592,7 +635,9 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
             _raise_http_error(status_code=503, code="signing_not_configured")
         # Verify signature only; caller can also check customer_id match themselves.
         payload = canonical_json_bytes(req.evidence_pack)
-        return VerifyEvidencePackResponse(valid=verify_bytes(signing_secret, payload, req.signature))
+        return VerifyEvidencePackResponse(
+            valid=verify_bytes(signing_secret, payload, req.signature)
+        )
 
     @app.post(
         "/v1/admin/keys",
@@ -655,7 +700,9 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
         _key = customer_id or global_ingest_key
 
         def run() -> None:
-            artifact = ingest_func(store=store, output_dir=raw_dir / _key, retrieval_ts=retrieval_ts)
+            artifact = ingest_func(
+                store=store, output_dir=raw_dir / _key, retrieval_ts=retrieval_ts
+            )
             ingest_cache.put(_key, artifact)
 
         t = threading.Thread(target=run, daemon=True)
@@ -687,7 +734,9 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
         response_model=ScreenResponse,
         responses=ERROR_RESPONSES,
     )
-    def sanctions_screen(req: ScreenRequest, principal: ApiPrincipal = Depends(principal_from_request)) -> ScreenResponse:
+    def sanctions_screen(
+        req: ScreenRequest, principal: ApiPrincipal = Depends(principal_from_request)
+    ) -> ScreenResponse:
         if "write:screen" not in principal.scopes:
             _raise_http_error(status_code=403, code="missing_scope")
         artifact = ingest_cache.get_or_refresh(
@@ -711,7 +760,11 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
             evidence_pack_id = cached
         else:
             artifact_dict = artifact.to_dict()
-            result_dict = {"decision": result.decision, "hits": result.hits, "name_norm": result.name_norm}
+            result_dict = {
+                "decision": result.decision,
+                "hits": result.hits,
+                "name_norm": result.name_norm,
+            }
             canonical_pack_hash = sha256_hex(
                 canonical_json_bytes({"ingestion": artifact_dict, "result": result_dict})
             )
@@ -775,4 +828,3 @@ def main() -> int:
     port = int(os.environ.get("PROOFRAIL_PORT", "8000"))
     uvicorn.run("ProofRail.service.app:app", host=host, port=port, reload=False)
     return 0
-

@@ -25,4 +25,3 @@ class ApiPrincipal:
 def parse_scopes(scopes: str) -> frozenset[str]:
     parts = [s.strip() for s in scopes.split(",")]
     return frozenset([p for p in parts if p])
-
