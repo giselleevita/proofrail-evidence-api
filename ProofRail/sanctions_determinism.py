@@ -209,7 +209,9 @@ def deterministic_match(
     output: list[dict[str, Any]] = []
     for subject in subjects:
         normalised = normalise_name(subject["name"])
-        hits = [source_id for source_id, name_set in sanctions_names.items() if normalised in name_set]
+        hits = [
+            source_id for source_id, name_set in sanctions_names.items() if normalised in name_set
+        ]
         output.append(
             {
                 "subject_id": subject["subject_id"],
@@ -233,7 +235,9 @@ def deterministic_match(
 def compute_list_version(ingestions: list[SourceIngestion], retrieval_ts: str) -> str:
     source_hash_material = []
     for source in sorted(ingestions, key=lambda item: item.source_id):
-        source_hash_material.append(f"{source.source_id}:{source.content_sha256 or 'NONE'}:{source.status}")
+        source_hash_material.append(
+            f"{source.source_id}:{source.content_sha256 or 'NONE'}:{source.status}"
+        )
     combined_hash = sha256_bytes("|".join(source_hash_material).encode("utf-8"))
     return f"{retrieval_ts}|hash:{combined_hash}"
 
@@ -249,7 +253,9 @@ def run_match_pipeline(
     output_dir.mkdir(exist_ok=True)
     if retrieval_ts is None:
         retrieval_ts = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    ingestion_run_id = f"ing_{retrieval_ts.replace(':', '').replace('-', '').replace('T', '_').replace('Z', '')}"
+    ingestion_run_id = (
+        f"ing_{retrieval_ts.replace(':', '').replace('-', '').replace('T', '_').replace('Z', '')}"
+    )
     ingestions: list[SourceIngestion] = []
     raw_payloads: dict[str, bytes] = {}
     session = build_session(max_retries=max_retries)
@@ -276,7 +282,9 @@ def run_match_pipeline(
             ingestions.append(ingestion)
             raw_payloads[source_id] = payload
             continue
-        metadata, payload = fetch_source(session, source_id, url, retrieval_ts, ingestion_run_id, output_dir)
+        metadata, payload = fetch_source(
+            session, source_id, url, retrieval_ts, ingestion_run_id, output_dir
+        )
         ingestions.append(metadata)
         if payload is not None and metadata.status == "ok":
             raw_payloads[source_id] = payload
@@ -312,14 +320,18 @@ def run_match_pipeline(
             "OFAC_name_candidates": len(ofac_names),
             "UN_name_candidates": len(un_names),
         },
-        "normalised_name_set_sizes": {source_id: len(name_set) for source_id, name_set in sanctions_names.items()},
+        "normalised_name_set_sizes": {
+            source_id: len(name_set) for source_id, name_set in sanctions_names.items()
+        },
         "list_version": list_version,
         "subjects_count": len(subjects),
         "determinism": {
             "run1_hash": run1_hash,
             "run2_hash": run2_hash,
             "identical": run1_hash == run2_hash and run1 == run2,
-            "non_determinism_causes": [] if run1_hash == run2_hash and run1 == run2 else [
+            "non_determinism_causes": []
+            if run1_hash == run2_hash and run1 == run2
+            else [
                 "unordered data structure iteration",
                 "time-dependent fields in matcher output",
             ],
@@ -357,12 +369,16 @@ def main() -> None:
     )
     if args.reference_hash_path:
         reference_path = Path(args.reference_hash_path)
-        reference_hash = reference_path.read_text(encoding="utf-8").strip() if reference_path.exists() else None
+        reference_hash = (
+            reference_path.read_text(encoding="utf-8").strip() if reference_path.exists() else None
+        )
         report["cross_run_comparison"] = {
             "reference_hash_path": str(reference_path.resolve()),
             "reference_hash": reference_hash,
             "current_hash": report["determinism"]["run1_hash"],
-            "matches_reference": reference_hash == report["determinism"]["run1_hash"] if reference_hash else None,
+            "matches_reference": reference_hash == report["determinism"]["run1_hash"]
+            if reference_hash
+            else None,
         }
         reference_path.write_text(report["determinism"]["run1_hash"], encoding="utf-8")
 

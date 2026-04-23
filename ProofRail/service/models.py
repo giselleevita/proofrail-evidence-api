@@ -50,4 +50,3 @@ class IngestArtifact:
             "transform_id": self.transform_id,
             "model_version": self.model_version,
         }
-

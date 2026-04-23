@@ -22,7 +22,9 @@ class TestOpenApiContract(unittest.TestCase):
         schema = self.client.get("/openapi.json").json()
         components = schema.get("components", {}).get("schemas", {})
         self.assertIn("EvidencePack", components)
-        self.assertIn("HTTPValidationError", components)  # FastAPI default component may still exist
+        self.assertIn(
+            "HTTPValidationError", components
+        )  # FastAPI default component may still exist
 
     def test_readyz(self) -> None:
         resp = self.client.get("/readyz")
@@ -60,4 +62,3 @@ class TestOpenApiContract(unittest.TestCase):
         if resp.status_code == 429:
             body = resp.json()
             self.assertEqual(body["error"]["code"], "rate_limited")
-

@@ -42,4 +42,3 @@ class RateLimiter:
                 )
                 self._buckets[key] = bucket
             return bucket.allow(cost=cost)
-

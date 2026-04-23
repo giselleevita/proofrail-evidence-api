@@ -23,4 +23,3 @@ class TestStorageIntegrity(unittest.TestCase):
             with self.assertRaises(ValueError) as ctx:
                 store.get_pack(pack_id)
             self.assertEqual(str(ctx.exception), "evidence_pack_integrity_failed")
-

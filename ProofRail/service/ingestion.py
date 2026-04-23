@@ -32,7 +32,9 @@ def ingest_sources(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     retrieval_ts = retrieval_ts or utc_now_iso()
-    ingestion_run_id = f"ing_{retrieval_ts.replace(':', '').replace('-', '').replace('T', '_').replace('Z', '')}"
+    ingestion_run_id = (
+        f"ing_{retrieval_ts.replace(':', '').replace('-', '').replace('T', '_').replace('Z', '')}"
+    )
 
     session = build_session(max_retries=max_retries)
     ingestions: list[dict[str, Any]] = []
@@ -99,4 +101,3 @@ def ingest_sources(
         transform_id=TRANSFORM_ID,
         model_version=MODEL_VERSION,
     )
-

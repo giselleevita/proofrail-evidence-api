@@ -11,4 +11,3 @@ def sign_bytes(secret: bytes, payload: bytes) -> str:
 def verify_bytes(secret: bytes, payload: bytes, signature_hex: str) -> bool:
     expected = sign_bytes(secret, payload)
     return hmac.compare_digest(expected, signature_hex)
-

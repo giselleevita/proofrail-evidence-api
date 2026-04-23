@@ -49,4 +49,3 @@ class IngestionCache:
         artifact = refresh_func()
         self.put(customer_id, artifact)
         return artifact
-

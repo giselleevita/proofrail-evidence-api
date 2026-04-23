@@ -43,9 +43,10 @@ class NameSetCache:
         return decoded
 
 
-def screen_subject_name(subject_name: str, sanctions_name_sets: dict[str, set[str]]) -> ScreeningResult:
+def screen_subject_name(
+    subject_name: str, sanctions_name_sets: dict[str, set[str]]
+) -> ScreeningResult:
     name_norm = normalise_name(subject_name)
     hits = sorted([src for src, names in sanctions_name_sets.items() if name_norm in names])
     decision: Decision = "block" if hits else "allow"
     return ScreeningResult(decision=decision, hits=hits, name_norm=name_norm)
-
