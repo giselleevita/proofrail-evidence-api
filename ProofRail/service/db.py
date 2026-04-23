@@ -30,11 +30,13 @@ CREATE TABLE IF NOT EXISTS usage_events (
   customer_id TEXT NOT NULL,
   route TEXT NOT NULL,
   status_code INTEGER NOT NULL,
-  latency_ms REAL NOT NULL
+  latency_ms REAL NOT NULL,
+  request_id TEXT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_usage_events_ts ON usage_events(ts);
 CREATE INDEX IF NOT EXISTS idx_usage_events_key ON usage_events(api_key_id);
+CREATE INDEX IF NOT EXISTS idx_usage_events_customer_ts ON usage_events(customer_id, ts);
 
 CREATE TABLE IF NOT EXISTS plans (
   customer_id TEXT PRIMARY KEY,
@@ -59,9 +61,13 @@ class ProofRailDb:
         self._init()
 
     def _connect(self) -> sqlite3.Connection:
-        con = sqlite3.connect(self.cfg.path)
+        # Prefer explicit timeouts + WAL for better concurrency behavior under concurrent writes.
+        con = sqlite3.connect(self.cfg.path, timeout=30.0)
         con.row_factory = sqlite3.Row
         con.execute("PRAGMA foreign_keys=ON")
+        con.execute("PRAGMA journal_mode=WAL")
+        con.execute("PRAGMA synchronous=NORMAL")
+        con.execute("PRAGMA busy_timeout=30000")
         return con
 
     def _init(self) -> None:
@@ -71,6 +77,9 @@ class ProofRailDb:
             cols = {row["name"] for row in con.execute("PRAGMA table_info(api_keys)").fetchall()}
             if "scopes" not in cols:
                 con.execute("ALTER TABLE api_keys ADD COLUMN scopes TEXT NOT NULL DEFAULT 'write:screen,read:evidence'")
+            usage_cols = {row["name"] for row in con.execute("PRAGMA table_info(usage_events)").fetchall()}
+            if "request_id" not in usage_cols:
+                con.execute("ALTER TABLE usage_events ADD COLUMN request_id TEXT NULL")
 
     def ensure_customer(self, customer_id: str, created_at: str) -> None:
         with self._connect() as con:
@@ -114,12 +123,40 @@ class ProofRailDb:
         route: str,
         status_code: int,
         latency_ms: float,
+        request_id: str | None = None,
     ) -> None:
         with self._connect() as con:
             con.execute(
-                "INSERT INTO usage_events(ts, api_key_id, customer_id, route, status_code, latency_ms) VALUES (?, ?, ?, ?, ?, ?)",
-                (ts, api_key_id, customer_id, route, int(status_code), float(latency_ms)),
+                "INSERT INTO usage_events(ts, api_key_id, customer_id, route, status_code, latency_ms, request_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (ts, api_key_id, customer_id, route, int(status_code), float(latency_ms), request_id),
             )
+
+    def insert_usage_events(self, events: list[dict[str, object]]) -> None:
+        if not events:
+            return
+        with self._connect() as con:
+            con.executemany(
+                "INSERT INTO usage_events(ts, api_key_id, customer_id, route, status_code, latency_ms, request_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        str(e["ts"]),
+                        str(e["api_key_id"]),
+                        str(e["customer_id"]),
+                        str(e["route"]),
+                        int(e["status_code"]),
+                        float(e["latency_ms"]),
+                        e.get("request_id"),
+                    )
+                    for e in events
+                ],
+            )
+
+    def delete_usage_events_before(self, ts_exclusive: str) -> int:
+        with self._connect() as con:
+            cur = con.execute("DELETE FROM usage_events WHERE ts < ?", (ts_exclusive,))
+            return int(cur.rowcount or 0)
 
     def usage_summary(self, customer_id: str, since_ts: str) -> dict[str, int]:
         with self._connect() as con:
