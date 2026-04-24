@@ -430,6 +430,8 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
         """Trigger an ingestion refresh via the worker job queue."""
         _key = customer_id or global_ingest_key
         now = utc_now_iso()
+        # Best-effort de-dupe: keep only the latest pending refresh per key.
+        state.db.delete_pending_jobs(job_type="ingest_refresh", job_key=_key)
         job_id = state.db.enqueue_job(
             job_type="ingest_refresh",
             job_key=_key,
@@ -448,6 +450,8 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
         if not state.cfg.enable_scheduler:
             raise_http_error(status_code=409, code="scheduler_disabled")
         now = utc_now_iso()
+        # Best-effort de-dupe: replace any pending schedule for this key.
+        state.db.delete_pending_jobs(job_type="ingest_refresh", job_key=_key)
         job_id = state.db.enqueue_job(
             job_type="ingest_refresh",
             job_key=_key,

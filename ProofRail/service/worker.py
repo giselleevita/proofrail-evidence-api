@@ -168,6 +168,11 @@ def process_once(state, *, do_gc: bool = False) -> None:  # noqa: ANN001
                         .isoformat()
                         .replace("+00:00", "Z")
                     )
+                    # Best-effort de-dupe: ensure only one pending scheduled refresh per key.
+                    try:
+                        state.db.delete_pending_jobs(job_type="ingest_refresh", job_key=key)
+                    except Exception:  # noqa: BLE001
+                        pass
                     state.db.enqueue_job(
                         job_type="ingest_refresh",
                         job_key=key,
