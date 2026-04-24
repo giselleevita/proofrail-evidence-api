@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 
@@ -132,6 +133,7 @@ CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_customer ON webhook_deliveries
 CREATE TABLE IF NOT EXISTS jobs (
   job_id BIGSERIAL PRIMARY KEY,
   job_type TEXT NOT NULL,
+  job_key TEXT NULL,
   payload_json TEXT NOT NULL,
   status TEXT NOT NULL,
   locked_until TEXT NULL,
@@ -143,6 +145,7 @@ CREATE TABLE IF NOT EXISTS jobs (
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_due ON jobs(status, run_at);
 CREATE INDEX IF NOT EXISTS idx_jobs_locked_until ON jobs(locked_until);
+CREATE INDEX IF NOT EXISTS idx_jobs_key ON jobs(job_type, job_key);
 """
 
 
@@ -173,10 +176,12 @@ class ProofRailDbPg:
                 for s in stmts:
                     con.execute(s)
                 # Back-compat migration for existing pilot DBs.
+                con.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS job_key TEXT NULL")
                 con.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS locked_until TEXT NULL")
                 con.execute(
                     "CREATE INDEX IF NOT EXISTS idx_jobs_locked_until ON jobs(locked_until)"
                 )
+                con.execute("CREATE INDEX IF NOT EXISTS idx_jobs_key ON jobs(job_type, job_key)")
             finally:
                 con.execute("SELECT pg_advisory_unlock(741_224_001)")
 
@@ -651,12 +656,14 @@ class ProofRailDbPg:
 
     # --- jobs queue (pilot) ---
 
-    def enqueue_job(self, *, job_type: str, payload_json: str, run_at: str, now: str) -> int:
+    def enqueue_job(
+        self, *, job_type: str, job_key: str | None, payload_json: str, run_at: str, now: str
+    ) -> int:
         with self._connect() as con:
             r = con.execute(
-                "INSERT INTO jobs(job_type, payload_json, status, attempt_count, run_at, created_at, updated_at) "
-                "VALUES (%s,%s,'queued',0,%s,%s,%s) RETURNING job_id",
-                (job_type, payload_json, run_at, now, now),
+                "INSERT INTO jobs(job_type, job_key, payload_json, status, attempt_count, run_at, created_at, updated_at) "
+                "VALUES (%s,%s,%s,'queued',0,%s,%s,%s) RETURNING job_id",
+                (job_type, job_key, payload_json, run_at, now, now),
             ).fetchone()
             return int(r[0]) if r else 0
 
@@ -682,7 +689,7 @@ class ProofRailDbPg:
                     updated_at = %s
                 FROM picked
                 WHERE j.job_id = picked.job_id
-                RETURNING j.job_id, j.job_type, j.payload_json, j.status, j.attempt_count
+                RETURNING j.job_id, j.job_type, j.job_key, j.payload_json, j.status, j.attempt_count
                 """,
                 (now, now, limit_n, locked_until, now),
             ).fetchall()
@@ -690,9 +697,72 @@ class ProofRailDbPg:
             {
                 "job_id": int(r[0]),
                 "job_type": str(r[1]),
-                "payload_json": str(r[2]),
+                "job_key": str(r[2]) if r[2] is not None else "",
+                "payload_json": str(r[3]),
+                "status": str(r[4]),
+                "attempt_count": int(r[5]),
+            }
+            for r in rows
+        ]
+
+    def delete_pending_jobs(self, *, job_type: str, job_key: str) -> int:
+        with self._connect() as con:
+            r = con.execute(
+                "DELETE FROM jobs WHERE job_type=%s AND job_key=%s AND status IN ('queued','retry')",
+                (job_type, job_key),
+            )
+            return int(getattr(r, "rowcount", 0) or 0)
+
+    def job_counts_by_status(self) -> dict[str, int]:
+        with self._connect() as con:
+            rows = con.execute(
+                "SELECT status, COUNT(*)::INT AS n FROM jobs GROUP BY status ORDER BY status"
+            ).fetchall()
+        return {str(r[0]): int(r[1]) for r in rows}
+
+    def job_locked_count(self, *, now: str) -> int:
+        with self._connect() as con:
+            row = con.execute(
+                "SELECT COUNT(*)::INT AS n FROM jobs WHERE locked_until IS NOT NULL AND locked_until > %s",
+                (now,),
+            ).fetchone()
+        return int(row[0]) if row else 0
+
+    def job_lag_seconds(self, *, now: str) -> int:
+        with self._connect() as con:
+            row = con.execute(
+                "SELECT MIN(run_at) FROM jobs WHERE status IN ('queued','retry')"
+            ).fetchone()
+        min_run_at = str(row[0]) if row and row[0] is not None else ""
+        if not min_run_at:
+            return 0
+        try:
+            now_dt = datetime.fromisoformat(now.replace("Z", "+00:00"))
+            due_dt = datetime.fromisoformat(min_run_at.replace("Z", "+00:00"))
+            lag = int((now_dt - due_dt).total_seconds())
+            return max(0, lag)
+        except Exception:  # noqa: BLE001
+            return 0
+
+    def list_failed_jobs(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        limit_n = max(1, min(int(limit), 500))
+        with self._connect() as con:
+            rows = con.execute(
+                "SELECT job_id, job_type, job_key, status, attempt_count, run_at, last_error, created_at, updated_at "
+                "FROM jobs WHERE status='failed' ORDER BY updated_at DESC LIMIT %s",
+                (limit_n,),
+            ).fetchall()
+        return [
+            {
+                "job_id": int(r[0]),
+                "job_type": str(r[1]),
+                "job_key": str(r[2]) if r[2] is not None else "",
                 "status": str(r[3]),
                 "attempt_count": int(r[4]),
+                "run_at": str(r[5]),
+                "last_error": str(r[6]) if r[6] is not None else None,
+                "created_at": str(r[7]),
+                "updated_at": str(r[8]),
             }
             for r in rows
         ]

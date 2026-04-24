@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -142,6 +143,7 @@ CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_customer ON webhook_deliveries
 CREATE TABLE IF NOT EXISTS jobs (
   job_id INTEGER PRIMARY KEY AUTOINCREMENT,
   job_type TEXT NOT NULL,
+  job_key TEXT NULL,
   payload_json TEXT NOT NULL,
   status TEXT NOT NULL,
   attempt_count INTEGER NOT NULL DEFAULT 0,
@@ -243,15 +245,18 @@ class ProofRailDb:
                 is None
             ):
                 con.execute(
-                    "CREATE TABLE IF NOT EXISTS jobs (job_id INTEGER PRIMARY KEY AUTOINCREMENT, job_type TEXT NOT NULL, payload_json TEXT NOT NULL, status TEXT NOT NULL, attempt_count INTEGER NOT NULL DEFAULT 0, run_at TEXT NOT NULL, last_error TEXT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
+                    "CREATE TABLE IF NOT EXISTS jobs (job_id INTEGER PRIMARY KEY AUTOINCREMENT, job_type TEXT NOT NULL, job_key TEXT NULL, payload_json TEXT NOT NULL, status TEXT NOT NULL, attempt_count INTEGER NOT NULL DEFAULT 0, run_at TEXT NOT NULL, last_error TEXT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
                 )
                 con.execute("CREATE INDEX IF NOT EXISTS idx_jobs_due ON jobs(status, run_at)")
 
             # Jobs leasing (safe migration): add locked_until column + index if missing.
             cols = {r["name"] for r in con.execute("PRAGMA table_info(jobs)").fetchall()}
+            if "job_key" not in cols:
+                con.execute("ALTER TABLE jobs ADD COLUMN job_key TEXT NULL")
             if "locked_until" not in cols:
                 con.execute("ALTER TABLE jobs ADD COLUMN locked_until TEXT NULL")
             con.execute("CREATE INDEX IF NOT EXISTS idx_jobs_locked_until ON jobs(locked_until)")
+            con.execute("CREATE INDEX IF NOT EXISTS idx_jobs_key ON jobs(job_type, job_key)")
 
     def ensure_customer(self, customer_id: str, created_at: str) -> None:
         with self._connect() as con:
@@ -654,12 +659,14 @@ class ProofRailDb:
 
     # --- jobs queue (pilot) ---
 
-    def enqueue_job(self, *, job_type: str, payload_json: str, run_at: str, now: str) -> int:
+    def enqueue_job(
+        self, *, job_type: str, job_key: str | None, payload_json: str, run_at: str, now: str
+    ) -> int:
         with self._connect() as con:
             cur = con.execute(
-                "INSERT INTO jobs(job_type, payload_json, status, attempt_count, run_at, created_at, updated_at) "
-                "VALUES (?, ?, 'queued', 0, ?, ?, ?)",
-                (job_type, payload_json, run_at, now, now),
+                "INSERT INTO jobs(job_type, job_key, payload_json, status, attempt_count, run_at, created_at, updated_at) "
+                "VALUES (?, ?, ?, 'queued', 0, ?, ?, ?)",
+                (job_type, job_key, payload_json, run_at, now, now),
             )
             return int(cur.lastrowid)
 
@@ -670,7 +677,7 @@ class ProofRailDb:
         with self._connect() as con:
             con.execute("BEGIN IMMEDIATE")
             rows = con.execute(
-                "SELECT job_id, job_type, payload_json, status, attempt_count "
+                "SELECT job_id, job_type, job_key, payload_json, status, attempt_count "
                 "FROM jobs "
                 "WHERE status IN ('queued','retry') AND run_at <= ? AND (locked_until IS NULL OR locked_until <= ?) "
                 "ORDER BY run_at ASC LIMIT ?",
@@ -686,12 +693,62 @@ class ProofRailDb:
             {
                 "job_id": int(r["job_id"]),
                 "job_type": str(r["job_type"]),
+                "job_key": str(r["job_key"]) if r["job_key"] is not None else "",
                 "payload_json": str(r["payload_json"]),
                 "status": str(r["status"]),
                 "attempt_count": int(r["attempt_count"]),
             }
             for r in rows
         ]
+
+    def delete_pending_jobs(self, *, job_type: str, job_key: str) -> int:
+        with self._connect() as con:
+            cur = con.execute(
+                "DELETE FROM jobs WHERE job_type = ? AND job_key = ? AND status IN ('queued','retry')",
+                (job_type, job_key),
+            )
+            return int(cur.rowcount or 0)
+
+    def job_counts_by_status(self) -> dict[str, int]:
+        with self._connect() as con:
+            rows = con.execute(
+                "SELECT status, COUNT(*) AS n FROM jobs GROUP BY status ORDER BY status"
+            ).fetchall()
+        return {str(r["status"]): int(r["n"]) for r in rows}
+
+    def job_locked_count(self, *, now: str) -> int:
+        with self._connect() as con:
+            row = con.execute(
+                "SELECT COUNT(*) AS n FROM jobs WHERE locked_until IS NOT NULL AND locked_until > ?",
+                (now,),
+            ).fetchone()
+        return int(row["n"] if row is not None else 0)
+
+    def job_lag_seconds(self, *, now: str) -> int:
+        with self._connect() as con:
+            row = con.execute(
+                "SELECT MIN(run_at) AS min_run_at FROM jobs WHERE status IN ('queued','retry')"
+            ).fetchone()
+        min_run_at = str(row["min_run_at"]) if row and row["min_run_at"] is not None else ""
+        if not min_run_at:
+            return 0
+        try:
+            now_dt = datetime.fromisoformat(now.replace("Z", "+00:00"))
+            due_dt = datetime.fromisoformat(min_run_at.replace("Z", "+00:00"))
+            lag = int((now_dt - due_dt).total_seconds())
+            return max(0, lag)
+        except Exception:  # noqa: BLE001
+            return 0
+
+    def list_failed_jobs(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        limit_n = max(1, min(int(limit), 500))
+        with self._connect() as con:
+            rows = con.execute(
+                "SELECT job_id, job_type, job_key, status, attempt_count, run_at, last_error, created_at, updated_at "
+                "FROM jobs WHERE status = 'failed' ORDER BY updated_at DESC LIMIT ?",
+                (limit_n,),
+            ).fetchall()
+        return [dict(r) for r in rows]
 
     def mark_job_success(self, *, job_id: int, now: str) -> None:
         with self._connect() as con:

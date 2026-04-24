@@ -14,7 +14,6 @@ from ProofRail.service.config import AppConfig
 from ProofRail.service.db import DbConfig, ProofRailDb
 from ProofRail.service.metrics import UsageEvent
 from ProofRail.service.ratelimit import RateLimiter
-from ProofRail.service.scheduler import RefreshScheduler
 from ProofRail.service.screening import NameSetCache
 from ProofRail.service.storage import EvidenceStore
 
@@ -58,7 +57,6 @@ class AppState:
     limiter: RateLimiter
     limiter_by_customer: dict[str, RateLimiter]
     limiter_lock: threading.Lock
-    scheduler: RefreshScheduler
     name_sets_cache: NameSetCache
     screen_cache: ScreenCache
 
@@ -97,7 +95,6 @@ def build_state(cfg: AppConfig) -> AppState:
     limiter_by_customer: dict[str, RateLimiter] = {}
     limiter_lock = threading.Lock()
 
-    scheduler = RefreshScheduler()
     name_sets_cache = NameSetCache(max_entries=64)
     screen_cache = ScreenCache(max_entries=cfg.screen_cache_max)
 
@@ -113,7 +110,6 @@ def build_state(cfg: AppConfig) -> AppState:
         limiter=limiter,
         limiter_by_customer=limiter_by_customer,
         limiter_lock=limiter_lock,
-        scheduler=scheduler,
         name_sets_cache=name_sets_cache,
         screen_cache=screen_cache,
         usage_queue=usage_queue,

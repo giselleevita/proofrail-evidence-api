@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import threading
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -95,6 +94,7 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
                 # Pilot worker queue: enqueue a job for prompt delivery (retry logic still lives on deliveries table).
                 state.db.enqueue_job(
                     job_type="webhook_delivery",
+                    job_key=str(delivery_id),
                     payload_json=json.dumps({"delivery_id": int(delivery_id)}),
                     run_at=utc_now_iso(),
                     now=utc_now_iso(),
@@ -116,6 +116,7 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
         for d in due:
             state.db.enqueue_job(
                 job_type="webhook_delivery",
+                job_key=str(d["delivery_id"]),
                 payload_json=json.dumps({"delivery_id": int(d["delivery_id"])}),
                 run_at=now,
                 now=now,
@@ -426,20 +427,17 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
         customer_id: str | None = None,
         retrieval_ts: str | None = None,
     ) -> dict[str, Any]:
-        """Trigger an ingestion refresh in the background."""
+        """Trigger an ingestion refresh via the worker job queue."""
         _key = customer_id or global_ingest_key
-
-        def run() -> None:
-            artifact = ingest_func(
-                store=state.store,
-                output_dir=state.cfg.raw_dir / _key,
-                retrieval_ts=retrieval_ts,
-            )
-            state.ingest_cache.put(_key, artifact)
-
-        t = threading.Thread(target=run, daemon=True)
-        t.start()
-        return {"status": "started"}
+        now = utc_now_iso()
+        job_id = state.db.enqueue_job(
+            job_type="ingest_refresh",
+            job_key=_key,
+            payload_json=json.dumps({"key": _key, "retrieval_ts": retrieval_ts}),
+            run_at=now,
+            now=now,
+        )
+        return {"status": "enqueued", "job_id": int(job_id), "key": _key}
 
     @app.post("/v1/admin/ingest/schedule", dependencies=[Depends(require_admin)])
     def schedule_refresh(
@@ -447,25 +445,32 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
         interval_seconds: int = 3600,
     ) -> dict[str, Any]:
         _key = customer_id or global_ingest_key
-
-        def run() -> None:
-            artifact = ingest_func(
-                store=state.store, output_dir=state.cfg.raw_dir / _key, retrieval_ts=None
-            )
-            state.ingest_cache.put(_key, artifact)
-
         if not state.cfg.enable_scheduler:
             raise_http_error(status_code=409, code="scheduler_disabled")
-        state.scheduler.start(_key, interval_seconds, run)
-        return {"status": "scheduled", "interval_seconds": interval_seconds, "key": _key}
+        now = utc_now_iso()
+        job_id = state.db.enqueue_job(
+            job_type="ingest_refresh",
+            job_key=_key,
+            payload_json=json.dumps(
+                {"key": _key, "retrieval_ts": None, "interval_s": int(interval_seconds)}
+            ),
+            run_at=now,
+            now=now,
+        )
+        return {
+            "status": "scheduled",
+            "interval_seconds": int(interval_seconds),
+            "key": _key,
+            "job_id": int(job_id),
+        }
 
     @app.post("/v1/admin/ingest/schedule/stop", dependencies=[Depends(require_admin)])
     def stop_schedule(customer_id: str | None = None) -> dict[str, Any]:
         _key = customer_id or global_ingest_key
         if not state.cfg.enable_scheduler:
             raise_http_error(status_code=409, code="scheduler_disabled")
-        state.scheduler.stop(_key)
-        return {"status": "stopped", "key": _key}
+        deleted = state.db.delete_pending_jobs(job_type="ingest_refresh", job_key=_key)
+        return {"status": "stopped", "key": _key, "deleted": int(deleted)}
 
     @app.get(
         "/v1/admin/usage/stats", dependencies=[Depends(require_admin)], responses=ERROR_RESPONSES
@@ -488,9 +493,25 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
             webhook_counts = state.db.webhook_delivery_counts()
         except Exception:
             webhook_counts = {}
+        job_counts = {}
+        job_lag_s = 0
+        job_locked = 0
+        try:
+            job_counts = state.db.job_counts_by_status()
+            job_lag_s = int(state.db.job_lag_seconds(now=utc_now_iso()))
+            job_locked = int(state.db.job_locked_count(now=utc_now_iso()))
+        except Exception:
+            job_counts = {}
+            job_lag_s = 0
+            job_locked = 0
         return {
             "webhooks": {
                 "deliveries_by_status": webhook_counts,
+            },
+            "jobs": {
+                "by_status": job_counts,
+                "lag_seconds": job_lag_s,
+                "locked": job_locked,
             },
             "usage": {
                 "queue_depth": int(state.usage_queue.qsize()),
@@ -506,6 +527,15 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
     )
     def admin_webhook_dlq(limit: int = 100) -> dict[str, Any]:
         items = state.db.list_failed_webhook_deliveries(limit=limit)
+        return {"items": items}
+
+    @app.get(
+        "/v1/admin/jobs/dlq",
+        dependencies=[Depends(require_admin)],
+        responses=ERROR_RESPONSES,
+    )
+    def admin_jobs_dlq(limit: int = 100) -> dict[str, Any]:
+        items = state.db.list_failed_jobs(limit=limit)
         return {"items": items}
 
     @app.post(
