@@ -12,6 +12,9 @@ class TestOpenApiContract(unittest.TestCase):
         os.environ["PROOFRAIL_ADMIN_KEY"] = "dev-admin"
         self.client = TestClient(create_app())
 
+    def tearDown(self) -> None:
+        self.client.close()
+
     def test_openapi_contains_error_response_schema(self) -> None:
         schema = self.client.get("/openapi.json").json()
         components = schema.get("components", {}).get("schemas", {})
@@ -55,9 +58,11 @@ class TestOpenApiContract(unittest.TestCase):
         import os
 
         os.environ["PROOFRAIL_RPM"] = "2"
-        client = TestClient(create_app())
-        for _ in range(5):
-            resp = client.post("/v1/sanctions/screen", json={"subject": {"name": "John Doe"}})
+        with TestClient(create_app()) as client:
+            for _ in range(5):
+                resp = client.post(
+                    "/v1/sanctions/screen", json={"subject": {"name": "John Doe"}}
+                )
         self.assertIn(resp.status_code, (401, 429))
         if resp.status_code == 429:
             body = resp.json()

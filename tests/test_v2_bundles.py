@@ -31,6 +31,9 @@ class TestV2Bundles(unittest.TestCase):
 
         self.client = TestClient(create_app(ingest_func=fake_ingest))
 
+    def tearDown(self) -> None:
+        self.client.close()
+
     def test_case_bundle_signed_and_verifiable(self) -> None:
         r = self.client.post(
             "/v1/admin/keys",
@@ -77,3 +80,4 @@ class TestV2Bundles(unittest.TestCase):
         )
         self.assertEqual(v.status_code, 200)
         self.assertTrue(v.json()["valid"])
+

@@ -17,7 +17,9 @@ class TestV2Explainability(unittest.TestCase):
 
         def fake_ingest(*, store, output_dir, retrieval_ts):  # noqa: ANN001
             # Store normalized values to match screening logic exactly.
-            blob_sha = store.put_blob((f'{{"TEST":["{normalise_name("John Doe")}"]}}').encode())
+            blob_sha = store.put_blob(
+                (f'{{"TEST":["{normalise_name("John Doe")}"]}}').encode("utf-8")
+            )
             return IngestArtifact(
                 retrieval_timestamp=retrieval_ts or "2026-01-01T00:00:00Z",
                 list_version="test-list-v1",
@@ -30,6 +32,9 @@ class TestV2Explainability(unittest.TestCase):
             )
 
         self.client = TestClient(create_app(ingest_func=fake_ingest))
+
+    def tearDown(self) -> None:
+        self.client.close()
 
     def _new_key(self) -> str:
         r = self.client.post(
@@ -83,3 +88,4 @@ class TestV2Explainability(unittest.TestCase):
         self.assertEqual(pdf.status_code, 200)
         self.assertTrue(pdf.content.startswith(b"%PDF"))
         # PDF streams are typically compressed; just ensure it's a valid PDF.
+

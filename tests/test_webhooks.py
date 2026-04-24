@@ -38,6 +38,9 @@ class TestWebhooks(unittest.TestCase):
         )
         self.api_key = r.json()["api_key"]
 
+    def tearDown(self) -> None:
+        self.client.close()
+
     def test_subscribe_emits_and_admin_runner_delivers(self) -> None:
         # Create subscription
         sub = self.client.post(
@@ -86,3 +89,4 @@ class TestWebhooks(unittest.TestCase):
             headers={"x-api-key": self.api_key},
         )
         self.assertEqual(d.status_code, 200)
+

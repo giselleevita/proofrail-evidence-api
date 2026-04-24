@@ -29,6 +29,9 @@ class TestV2ReviewDecision(unittest.TestCase):
 
         self.client = TestClient(create_app(ingest_func=fake_ingest))
 
+    def tearDown(self) -> None:
+        self.client.close()
+
     def test_review_decision_stored_and_exported(self) -> None:
         # admin key
         r = self.client.post(
