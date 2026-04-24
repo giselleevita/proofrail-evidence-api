@@ -767,6 +767,17 @@ class ProofRailDbPg:
             for r in rows
         ]
 
+    def delete_jobs_before(self, *, cutoff_ts: str, statuses: list[str]) -> int:
+        st = [str(s) for s in statuses if str(s)]
+        if not st:
+            return 0
+        with self._connect() as con:
+            r = con.execute(
+                "DELETE FROM jobs WHERE updated_at < %s AND status = ANY(%s)",
+                (cutoff_ts, st),
+            )
+            return int(getattr(r, "rowcount", 0) or 0)
+
     def mark_job_success(self, *, job_id: int, now: str) -> None:
         with self._connect() as con:
             con.execute(

@@ -69,6 +69,7 @@ def _run_retention_gc(state) -> None:  # noqa: ANN001
     now_dt = datetime.now(UTC)
     usage_cutoff = now_dt - timedelta(days=int(state.cfg.usage_retention_days))
     evidence_cutoff = now_dt - timedelta(days=int(state.cfg.evidence_retention_days))
+    jobs_cutoff = now_dt - timedelta(days=int(getattr(state.cfg, "jobs_retention_days", 7)))
 
     usage_cutoff_iso = usage_cutoff.replace(microsecond=0).isoformat().replace("+00:00", "Z")
     deleted_usage = 0
@@ -94,6 +95,24 @@ def _run_retention_gc(state) -> None:  # noqa: ANN001
     except Exception:  # noqa: BLE001
         pass
 
+    deleted_jobs = 0
+    try:
+        jobs_cutoff_iso = jobs_cutoff.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        deleted_jobs = int(
+            state.db.delete_jobs_before(ts_exclusive=jobs_cutoff_iso, statuses=["done", "failed"])
+        )
+    except TypeError:
+        # Postgres backend signature differs slightly.
+        try:
+            jobs_cutoff_iso = jobs_cutoff.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            deleted_jobs = int(
+                state.db.delete_jobs_before(cutoff_ts=jobs_cutoff_iso, statuses=["done", "failed"])
+            )
+        except Exception:  # noqa: BLE001
+            deleted_jobs = 0
+    except Exception:  # noqa: BLE001
+        deleted_jobs = 0
+
     try:
         state.db.insert_audit_event(
             ts=utc_now_iso(),
@@ -109,6 +128,7 @@ def _run_retention_gc(state) -> None:  # noqa: ANN001
                         "evidence_packs": deleted_packs,
                         "raw_fetch_files": deleted_raw,
                         "unreferenced_blobs": deleted_blobs,
+                        "jobs": deleted_jobs,
                     },
                 }
             ),

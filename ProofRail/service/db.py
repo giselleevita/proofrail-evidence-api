@@ -750,6 +750,17 @@ class ProofRailDb:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def delete_jobs_before(self, *, ts_exclusive: str, statuses: list[str]) -> int:
+        st = [str(s) for s in statuses if str(s)]
+        if not st:
+            return 0
+        with self._connect() as con:
+            cur = con.execute(
+                f"DELETE FROM jobs WHERE updated_at < ? AND status IN ({','.join(['?'] * len(st))})",
+                (ts_exclusive, *st),
+            )
+            return int(cur.rowcount or 0)
+
     def mark_job_success(self, *, job_id: int, now: str) -> None:
         with self._connect() as con:
             con.execute(
