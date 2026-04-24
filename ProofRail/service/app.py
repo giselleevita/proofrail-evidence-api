@@ -545,6 +545,43 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
         items = state.db.list_failed_jobs(limit=limit)
         return {"items": items}
 
+    @app.get(
+        "/v1/admin/jobs/stats",
+        dependencies=[Depends(require_admin)],
+        responses=ERROR_RESPONSES,
+    )
+    def admin_jobs_stats(limit_failed: int = 25) -> dict[str, Any]:
+        now = utc_now_iso()
+        out: dict[str, Any] = {
+            "now": now,
+            "by_status": {},
+            "lag_seconds": 0,
+            "locked": 0,
+            "oldest_pending": None,
+            "failed_recent": [],
+        }
+        try:
+            out["by_status"] = state.db.job_counts_by_status()
+        except Exception:
+            out["by_status"] = {}
+        try:
+            out["lag_seconds"] = int(state.db.job_lag_seconds(now=now))
+        except Exception:
+            out["lag_seconds"] = 0
+        try:
+            out["locked"] = int(state.db.job_locked_count(now=now))
+        except Exception:
+            out["locked"] = 0
+        try:
+            out["oldest_pending"] = state.db.get_oldest_pending_job()
+        except Exception:
+            out["oldest_pending"] = None
+        try:
+            out["failed_recent"] = state.db.list_failed_jobs(limit=int(limit_failed))
+        except Exception:
+            out["failed_recent"] = []
+        return out
+
     @app.post(
         "/v1/sanctions/screen",
         response_model=ScreenResponse,
