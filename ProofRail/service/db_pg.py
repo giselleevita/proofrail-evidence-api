@@ -767,6 +767,26 @@ class ProofRailDbPg:
             for r in rows
         ]
 
+    def get_oldest_pending_job(self) -> dict[str, Any] | None:
+        with self._connect() as con:
+            r = con.execute(
+                "SELECT job_id, job_type, job_key, status, attempt_count, run_at, last_error, created_at, updated_at "
+                "FROM jobs WHERE status IN ('queued','retry') ORDER BY run_at ASC LIMIT 1"
+            ).fetchone()
+        if not r:
+            return None
+        return {
+            "job_id": int(r[0]),
+            "job_type": str(r[1]),
+            "job_key": str(r[2]) if r[2] is not None else "",
+            "status": str(r[3]),
+            "attempt_count": int(r[4]),
+            "run_at": str(r[5]),
+            "last_error": str(r[6]) if r[6] is not None else None,
+            "created_at": str(r[7]),
+            "updated_at": str(r[8]),
+        }
+
     def delete_jobs_before(self, *, cutoff_ts: str, statuses: list[str]) -> int:
         st = [str(s) for s in statuses if str(s)]
         if not st:
