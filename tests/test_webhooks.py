@@ -89,4 +89,3 @@ class TestWebhooks(unittest.TestCase):
             headers={"x-api-key": self.api_key},
         )
         self.assertEqual(d.status_code, 200)
-

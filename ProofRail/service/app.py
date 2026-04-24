@@ -92,6 +92,8 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
                     now=utc_now_iso(),
                 )
                 # Pilot worker queue: enqueue a job for prompt delivery (retry logic still lives on deliveries table).
+                # Best-effort de-dupe: keep only one pending job per delivery id.
+                state.db.delete_pending_jobs(job_type="webhook_delivery", job_key=str(delivery_id))
                 state.db.enqueue_job(
                     job_type="webhook_delivery",
                     job_key=str(delivery_id),
@@ -114,6 +116,7 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
         due = state.db.list_due_webhook_deliveries(now=now, limit=limit)
         enqueued = 0
         for d in due:
+            state.db.delete_pending_jobs(job_type="webhook_delivery", job_key=str(d["delivery_id"]))
             state.db.enqueue_job(
                 job_type="webhook_delivery",
                 job_key=str(d["delivery_id"]),

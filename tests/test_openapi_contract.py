@@ -60,9 +60,7 @@ class TestOpenApiContract(unittest.TestCase):
         os.environ["PROOFRAIL_RPM"] = "2"
         with TestClient(create_app()) as client:
             for _ in range(5):
-                resp = client.post(
-                    "/v1/sanctions/screen", json={"subject": {"name": "John Doe"}}
-                )
+                resp = client.post("/v1/sanctions/screen", json={"subject": {"name": "John Doe"}})
         self.assertIn(resp.status_code, (401, 429))
         if resp.status_code == 429:
             body = resp.json()

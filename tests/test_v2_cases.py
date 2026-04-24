@@ -70,4 +70,3 @@ class TestV2Cases(unittest.TestCase):
         )
         self.assertEqual(q.status_code, 200)
         self.assertTrue(any(item["case_id"] == case_id for item in q.json()))
-
