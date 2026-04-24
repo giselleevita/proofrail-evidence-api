@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
 import signal
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from ProofRail.service.config import load_config
+from ProofRail.service.ingestion import ingest_sources
+from ProofRail.service.ingestion_demo import ingest_demo
 from ProofRail.service.state import build_state
 from ProofRail.service.utils import utc_now_iso
 from ProofRail.service.webhooks import deliver_once, next_attempt_ts
@@ -116,6 +119,8 @@ def _run_retention_gc(state) -> None:  # noqa: ANN001
 
 def process_once(state, *, do_gc: bool = False) -> None:  # noqa: ANN001
     now = utc_now_iso()
+    demo_mode = os.environ.get("PROOFRAIL_DEMO_MODE", "0") == "1"
+    ingest_func = ingest_demo if demo_mode else ingest_sources
     lease_until = (
         (datetime.now(UTC) + timedelta(seconds=30))
         .replace(microsecond=0)
@@ -124,11 +129,74 @@ def process_once(state, *, do_gc: bool = False) -> None:  # noqa: ANN001
     )
     jobs = state.db.claim_due_jobs(now=now, locked_until=lease_until, limit=100)
     for j in jobs:
-        if str(j["job_type"]) != "webhook_delivery":
-            state.db.mark_job_failed(job_id=int(j["job_id"]), now=now, error="unknown_job_type")
-            continue
+        job_type = str(j.get("job_type") or "")
         try:
             payload = json.loads(str(j["payload_json"]))
+        except Exception:  # noqa: BLE001
+            state.db.mark_job_failed(job_id=int(j["job_id"]), now=now, error="bad_payload")
+            continue
+
+        if job_type == "ingest_refresh":
+            try:
+                key = str(payload.get("key") or j.get("job_key") or "__global__")
+                retrieval_ts = payload.get("retrieval_ts", None)
+                interval_s = payload.get("interval_s", None)
+                artifact = ingest_func(
+                    store=state.store,
+                    output_dir=state.cfg.raw_dir / key,
+                    retrieval_ts=retrieval_ts,
+                )
+                state.ingest_cache.put(key, artifact)
+                state.db.insert_audit_event(
+                    ts=utc_now_iso(),
+                    actor="worker",
+                    action="ingest_refresh",
+                    request_id=None,
+                    details_json=json.dumps(
+                        {
+                            "key": key,
+                            "retrieval_ts": retrieval_ts,
+                            "list_version": getattr(artifact, "list_version", None),
+                        }
+                    ),
+                )
+                # If scheduled, re-enqueue itself.
+                if interval_s is not None:
+                    run_at = (
+                        (datetime.now(UTC) + timedelta(seconds=int(interval_s)))
+                        .replace(microsecond=0)
+                        .isoformat()
+                        .replace("+00:00", "Z")
+                    )
+                    state.db.enqueue_job(
+                        job_type="ingest_refresh",
+                        job_key=key,
+                        payload_json=json.dumps(
+                            {"key": key, "retrieval_ts": None, "interval_s": int(interval_s)}
+                        ),
+                        run_at=run_at,
+                        now=now,
+                    )
+                state.db.mark_job_success(job_id=int(j["job_id"]), now=now)
+            except Exception as e:  # noqa: BLE001
+                state.db.mark_job_retry(
+                    job_id=int(j["job_id"]),
+                    now=now,
+                    run_at=(
+                        (datetime.now(UTC) + timedelta(seconds=60))
+                        .replace(microsecond=0)
+                        .isoformat()
+                        .replace("+00:00", "Z")
+                    ),
+                    error=str(e),
+                )
+            continue
+
+        if job_type != "webhook_delivery":
+            state.db.mark_job_failed(job_id=int(j["job_id"]), now=now, error="unknown_job_type")
+            continue
+
+        try:
             delivery_id = int(payload["delivery_id"])
         except Exception:  # noqa: BLE001
             state.db.mark_job_failed(job_id=int(j["job_id"]), now=now, error="bad_payload")
