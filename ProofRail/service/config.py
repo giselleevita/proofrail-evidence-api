@@ -11,6 +11,7 @@ class AppConfig:
     store_root: Path
     raw_dir: Path
     db_path: Path
+    db_url: str | None
     admin_key: str | None
     # Back-compat: used by v1 signature endpoints.
     signing_secret: bytes
@@ -37,6 +38,13 @@ class AppConfig:
     webhook_max_attempts: int
     webhook_retry_base_s: float
 
+    s3_bucket: str | None
+    s3_prefix: str
+    s3_endpoint_url: str | None
+    s3_region: str | None
+    s3_access_key_id: str | None
+    s3_secret_access_key: str | None
+
 
 def load_config(environ: dict[str, str] | None = None) -> AppConfig:
     env = environ or os.environ
@@ -44,6 +52,9 @@ def load_config(environ: dict[str, str] | None = None) -> AppConfig:
     store_root = Path(env.get("PROOFRAIL_STORE_DIR", "proofrail_store"))
     raw_dir = Path(env.get("PROOFRAIL_RAW_DIR", str(store_root / "raw_fetches")))
     db_path = Path(env.get("PROOFRAIL_DB_PATH", str(store_root / "proofrail.sqlite3")))
+    db_url = env.get("PROOFRAIL_DB_URL")
+    if db_url is not None:
+        db_url = db_url.strip() or None
 
     admin_key = env.get("PROOFRAIL_ADMIN_KEY")
     signing_secret = env.get("PROOFRAIL_SIGNING_SECRET", "").encode("utf-8")
@@ -93,10 +104,30 @@ def load_config(environ: dict[str, str] | None = None) -> AppConfig:
     webhook_max_attempts = int(env.get("PROOFRAIL_WEBHOOK_MAX_ATTEMPTS", "8"))
     webhook_retry_base_s = float(env.get("PROOFRAIL_WEBHOOK_RETRY_BASE_S", "2.0"))
 
+    s3_bucket = env.get("PROOFRAIL_S3_BUCKET")
+    if s3_bucket is not None:
+        s3_bucket = s3_bucket.strip() or None
+    s3_prefix = (env.get("PROOFRAIL_S3_PREFIX") or "").lstrip("/")
+    if s3_prefix and not s3_prefix.endswith("/"):
+        s3_prefix += "/"
+    s3_endpoint_url = env.get("PROOFRAIL_S3_ENDPOINT_URL")
+    if s3_endpoint_url is not None:
+        s3_endpoint_url = s3_endpoint_url.strip() or None
+    s3_region = env.get("PROOFRAIL_S3_REGION")
+    if s3_region is not None:
+        s3_region = s3_region.strip() or None
+    s3_access_key_id = env.get("PROOFRAIL_S3_ACCESS_KEY_ID")
+    if s3_access_key_id is not None:
+        s3_access_key_id = s3_access_key_id.strip() or None
+    s3_secret_access_key = env.get("PROOFRAIL_S3_SECRET_ACCESS_KEY")
+    if s3_secret_access_key is not None:
+        s3_secret_access_key = s3_secret_access_key.strip() or None
+
     return AppConfig(
         store_root=store_root,
         raw_dir=raw_dir,
         db_path=db_path,
+        db_url=db_url,
         admin_key=admin_key,
         signing_secret=signing_secret,
         signing_keys=signing_keys,
@@ -114,4 +145,10 @@ def load_config(environ: dict[str, str] | None = None) -> AppConfig:
         webhook_timeout_s=webhook_timeout_s,
         webhook_max_attempts=webhook_max_attempts,
         webhook_retry_base_s=webhook_retry_base_s,
+        s3_bucket=s3_bucket,
+        s3_prefix=s3_prefix,
+        s3_endpoint_url=s3_endpoint_url,
+        s3_region=s3_region,
+        s3_access_key_id=s3_access_key_id,
+        s3_secret_access_key=s3_secret_access_key,
     )

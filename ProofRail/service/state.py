@@ -5,6 +5,7 @@ import threading
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from typing import Any
 
 from fastapi import FastAPI
 
@@ -52,7 +53,7 @@ class ScreenCache:
 class AppState:
     cfg: AppConfig
     store: EvidenceStore
-    db: ProofRailDb
+    db: Any
     ingest_cache: IngestionCache
     limiter: RateLimiter
     limiter_by_customer: dict[str, RateLimiter]
@@ -68,8 +69,27 @@ class AppState:
 
 
 def build_state(cfg: AppConfig) -> AppState:
-    store = EvidenceStore(cfg.store_root)
-    db = ProofRailDb(DbConfig(path=cfg.db_path))
+    if cfg.s3_bucket:
+        from ProofRail.service.store_s3 import EvidenceStoreS3, S3StoreConfig
+
+        store = EvidenceStoreS3(
+            S3StoreConfig(
+                bucket=cfg.s3_bucket,
+                prefix=cfg.s3_prefix,
+                endpoint_url=cfg.s3_endpoint_url,
+                region=cfg.s3_region,
+                access_key_id=cfg.s3_access_key_id,
+                secret_access_key=cfg.s3_secret_access_key,
+            )
+        )
+    else:
+        store = EvidenceStore(cfg.store_root)
+    if cfg.db_url:
+        from ProofRail.service.db_pg import DbPgConfig, ProofRailDbPg
+
+        db = ProofRailDbPg(DbPgConfig(url=cfg.db_url))
+    else:
+        db = ProofRailDb(DbConfig(path=cfg.db_path))
 
     ingest_cache = IngestionCache(ttl_seconds=cfg.ingest_ttl_seconds)
 

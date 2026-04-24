@@ -15,6 +15,88 @@ services:
     volumes:
       - proofrail_data:/data
 
+  # Pilot parity stack (Postgres + MinIO + worker). Opt-in via profiles.
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["pilot"]
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-proofrail}
+    ports:
+      - "5433:5432"
+    volumes:
+      - proofrail_pg:/var/lib/postgresql/data
+
+  minio:
+    image: minio/minio:latest
+    profiles: ["pilot"]
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minio12345}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - proofrail_minio:/data
+
+  webhook_sink:
+    image: ealen/echo-server:latest
+    profiles: ["pilot"]
+    # Optional: expose for inspection in browser
+    ports:
+      - "8089:80"
+
+  proofrail_pilot_api:
+    build: .
+    profiles: ["pilot"]
+    environment:
+      PROOFRAIL_ADMIN_KEY: ${PROOFRAIL_ADMIN_KEY:-change-me}
+      PROOFRAIL_SIGNING_SECRET: ${PROOFRAIL_SIGNING_SECRET:-}
+      PROOFRAIL_SIGNING_KEYS: ${PROOFRAIL_SIGNING_KEYS:-k1:dev-signing-secret}
+      PROOFRAIL_SIGNING_KEY_CURRENT: ${PROOFRAIL_SIGNING_KEY_CURRENT:-k1}
+      PROOFRAIL_DEMO_MODE: ${PROOFRAIL_DEMO_MODE:-1}
+      PROOFRAIL_RPM: "120"
+      PROOFRAIL_DB_URL: ${PROOFRAIL_DB_URL:-postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-proofrail}}
+      PROOFRAIL_S3_BUCKET: ${PROOFRAIL_S3_BUCKET:-proofrail}
+      PROOFRAIL_S3_PREFIX: ${PROOFRAIL_S3_PREFIX:-}
+      PROOFRAIL_S3_ENDPOINT_URL: ${PROOFRAIL_S3_ENDPOINT_URL:-http://minio:9000}
+      PROOFRAIL_S3_REGION: ${PROOFRAIL_S3_REGION:-us-east-1}
+      PROOFRAIL_S3_ACCESS_KEY_ID: ${PROOFRAIL_S3_ACCESS_KEY_ID:-minio}
+      PROOFRAIL_S3_SECRET_ACCESS_KEY: ${PROOFRAIL_S3_SECRET_ACCESS_KEY:-minio12345}
+    depends_on:
+      - postgres
+      - minio
+      - webhook_sink
+    ports:
+      - "8001:8000"
+
+  proofrail_pilot_worker:
+    build: .
+    profiles: ["pilot"]
+    command: ["proofrail-worker"]
+    environment:
+      PROOFRAIL_ADMIN_KEY: ${PROOFRAIL_ADMIN_KEY:-change-me}
+      PROOFRAIL_SIGNING_SECRET: ${PROOFRAIL_SIGNING_SECRET:-}
+      PROOFRAIL_SIGNING_KEYS: ${PROOFRAIL_SIGNING_KEYS:-k1:dev-signing-secret}
+      PROOFRAIL_SIGNING_KEY_CURRENT: ${PROOFRAIL_SIGNING_KEY_CURRENT:-k1}
+      PROOFRAIL_DEMO_MODE: ${PROOFRAIL_DEMO_MODE:-1}
+      PROOFRAIL_RPM: "120"
+      PROOFRAIL_DB_URL: ${PROOFRAIL_DB_URL:-postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-proofrail}}
+      PROOFRAIL_S3_BUCKET: ${PROOFRAIL_S3_BUCKET:-proofrail}
+      PROOFRAIL_S3_PREFIX: ${PROOFRAIL_S3_PREFIX:-}
+      PROOFRAIL_S3_ENDPOINT_URL: ${PROOFRAIL_S3_ENDPOINT_URL:-http://minio:9000}
+      PROOFRAIL_S3_REGION: ${PROOFRAIL_S3_REGION:-us-east-1}
+      PROOFRAIL_S3_ACCESS_KEY_ID: ${PROOFRAIL_S3_ACCESS_KEY_ID:-minio}
+      PROOFRAIL_S3_SECRET_ACCESS_KEY: ${PROOFRAIL_S3_SECRET_ACCESS_KEY:-minio12345}
+    depends_on:
+      - postgres
+      - minio
+      - webhook_sink
+
 volumes:
   proofrail_data:
+  proofrail_pg:
+  proofrail_minio:
 

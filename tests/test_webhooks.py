@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from ProofRail.service.app import create_app
 from ProofRail.service.models import IngestArtifact
+from ProofRail.service.worker import process_once
 
 
 class TestWebhooks(unittest.TestCase):
@@ -58,9 +59,9 @@ class TestWebhooks(unittest.TestCase):
         )
         self.assertEqual(s.status_code, 200)
 
-        # Admin runner should attempt and mark delivered
+        # Admin runner should enqueue jobs (worker delivers)
         with mock.patch(
-            "ProofRail.service.app.deliver_once",
+            "ProofRail.service.worker.deliver_once",
             return_value=type("R", (), {"ok": True, "status_code": 200, "error": None})(),
         ):
             run = self.client.post(
@@ -68,10 +69,11 @@ class TestWebhooks(unittest.TestCase):
                 headers={"x-admin-key": "dev-admin"},
                 json={},
             )
-        self.assertEqual(run.status_code, 200)
+            self.assertEqual(run.status_code, 200)
+            # Process queued jobs once (simulates worker tick)
+            process_once(self.client.app.state.proofrail)
         body = run.json()
         self.assertTrue(body["attempted"] >= 1)
-        self.assertTrue(body["delivered"] >= 1)
 
         # Delete subscription
         subs = self.client.get(

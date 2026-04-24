@@ -56,7 +56,7 @@ from ProofRail.service.signing import sign_bytes, verify_bytes
 from ProofRail.service.state import attach_lifespan, build_state
 from ProofRail.service.storage import canonical_json_bytes, sha256_hex
 from ProofRail.service.utils import utc_now_iso
-from ProofRail.service.webhooks import build_event_payload, deliver_once, next_attempt_ts
+from ProofRail.service.webhooks import build_event_payload
 
 
 def create_app(*, ingest_func=ingest_sources) -> FastAPI:
@@ -84,12 +84,19 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
                 continue
             evs = s.get("events") or []
             if isinstance(evs, list) and (event_type in evs or "*" in evs):
-                state.db.enqueue_webhook_delivery(
+                delivery_id = state.db.enqueue_webhook_delivery(
                     subscription_id=str(s["subscription_id"]),
                     customer_id=customer_id,
                     event_type=event_type,
                     event_id=event_id,
                     payload_json=payload_json,
+                    now=utc_now_iso(),
+                )
+                # Pilot worker queue: enqueue a job for prompt delivery (retry logic still lives on deliveries table).
+                state.db.enqueue_job(
+                    job_type="webhook_delivery",
+                    payload_json=json.dumps({"delivery_id": int(delivery_id)}),
+                    run_at=utc_now_iso(),
                     now=utc_now_iso(),
                 )
 
@@ -105,72 +112,25 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
     ) -> V1AdminRunWebhookDeliveriesResponse:
         now = utc_now_iso()
         due = state.db.list_due_webhook_deliveries(now=now, limit=limit)
-        attempted = 0
-        delivered = 0
-        retried = 0
-        failed = 0
+        enqueued = 0
         for d in due:
-            attempted += 1
-            sub = state.db.get_webhook_subscription(subscription_id=str(d["subscription_id"]))
-            if sub is None or not sub.get("active"):
-                state.db.mark_webhook_delivery_failed(
-                    delivery_id=int(d["delivery_id"]), now=now, error="subscription_missing"
-                )
-                failed += 1
-                continue
-
-            res = deliver_once(
-                url=str(sub["url"]),
-                secret=str(sub["secret"]),
-                event_type=str(d["event_type"]),
-                event_id=str(d["event_id"]),
-                payload_json=str(d["payload_json"]),
-                timeout_s=float(state.cfg.webhook_timeout_s),
+            state.db.enqueue_job(
+                job_type="webhook_delivery",
+                payload_json=json.dumps({"delivery_id": int(d["delivery_id"])}),
+                run_at=now,
+                now=now,
             )
-            if res.ok:
-                state.db.mark_webhook_delivery_success(
-                    delivery_id=int(d["delivery_id"]),
-                    now=now,
-                    status_code=int(res.status_code or 0),
-                )
-                delivered += 1
-            else:
-                attempts = int(d["attempt_count"]) + 1
-                if attempts >= int(state.cfg.webhook_max_attempts):
-                    state.db.mark_webhook_delivery_failed(
-                        delivery_id=int(d["delivery_id"]), now=now, error=res.error
-                    )
-                    failed += 1
-                else:
-                    state.db.mark_webhook_delivery_retry(
-                        delivery_id=int(d["delivery_id"]),
-                        now=now,
-                        next_attempt_at=next_attempt_ts(
-                            now=now,
-                            attempt_count=int(d["attempt_count"]),
-                            retry_base_s=float(state.cfg.webhook_retry_base_s),
-                        ),
-                        status_code=res.status_code,
-                        error=res.error,
-                    )
-                    retried += 1
+            enqueued += 1
 
         state.db.insert_audit_event(
             ts=now,
             actor="admin",
             action="webhooks_deliveries_run",
             request_id=getattr(request.state, "request_id", None),
-            details_json=json.dumps(
-                {
-                    "attempted": attempted,
-                    "delivered": delivered,
-                    "retried": retried,
-                    "failed": failed,
-                }
-            ),
+            details_json=json.dumps({"enqueued": enqueued}),
         )
         return V1AdminRunWebhookDeliveriesResponse(
-            attempted=attempted, delivered=delivered, retried=retried, failed=failed
+            attempted=enqueued, delivered=0, retried=0, failed=0
         )
 
     global_ingest_key = "__global__"
@@ -281,12 +241,21 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
     def readyz() -> dict[str, str]:
         try:
             # DB ping
-            with state.db._connect() as con:  # noqa: SLF001
-                con.execute("SELECT 1").fetchone()
-            # Store dir write check
-            probe = state.cfg.store_root / ".readyz"
-            probe.write_text("ok", encoding="utf-8")
-            probe.unlink(missing_ok=True)
+            if hasattr(state.db, "_connect"):
+                with state.db._connect() as con:  # noqa: SLF001
+                    con.execute("SELECT 1").fetchone()
+            else:
+                # Fallback: best-effort read-only call
+                state.db.get_plan("probe")  # type: ignore[arg-type]
+
+            # Store check (filesystem vs S3)
+            if hasattr(state.store, "root"):
+                probe = state.cfg.store_root / ".readyz"
+                probe.write_text("ok", encoding="utf-8")
+                probe.unlink(missing_ok=True)
+            elif hasattr(state.store, "_s3") and hasattr(state.store, "bucket"):
+                # S3-compatible: ensure bucket reachable.
+                state.store._s3.head_bucket(Bucket=state.store.bucket)  # noqa: SLF001
         except Exception:
             raise_http_error(status_code=503, code="not_ready")
         return {"status": "ready"}
@@ -508,6 +477,37 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
             "dropped": int(state.usage_stats.dropped),
         }
 
+    @app.get(
+        "/v1/admin/metrics",
+        dependencies=[Depends(require_admin)],
+        responses=ERROR_RESPONSES,
+    )
+    def admin_metrics() -> dict[str, Any]:
+        webhook_counts = {}
+        try:
+            webhook_counts = state.db.webhook_delivery_counts()
+        except Exception:
+            webhook_counts = {}
+        return {
+            "webhooks": {
+                "deliveries_by_status": webhook_counts,
+            },
+            "usage": {
+                "queue_depth": int(state.usage_queue.qsize()),
+                "flushed": int(state.usage_stats.flushed),
+                "dropped": int(state.usage_stats.dropped),
+            },
+        }
+
+    @app.get(
+        "/v1/admin/webhooks/deliveries/dlq",
+        dependencies=[Depends(require_admin)],
+        responses=ERROR_RESPONSES,
+    )
+    def admin_webhook_dlq(limit: int = 100) -> dict[str, Any]:
+        items = state.db.list_failed_webhook_deliveries(limit=limit)
+        return {"items": items}
+
     @app.post(
         "/v1/sanctions/screen",
         response_model=ScreenResponse,
@@ -617,7 +617,12 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
         sanctions_name_sets = state.name_sets_cache.get(
             state.store, artifact.normalized_name_sets_blob_sha256
         )
-        result = screen_subject_name(req.subject.name, sanctions_name_sets)
+        result = screen_subject_name(
+            req.subject.name,
+            sanctions_name_sets,
+            subject_country=req.subject.country,
+            subject_dob=req.subject.dob,
+        )
         if demo_mode and req.subject.name.strip().lower() in {"rachel review", "review example"}:
             # Demo-only: allow showcasing a "review" path deterministically.
             result = type(result)(
@@ -1039,7 +1044,7 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
         request: Request,
         principal=Depends(principal_from_request),
     ) -> V2CaseDetail:
-        if "write:screen" not in principal.scopes:
+        if "write:cases" not in principal.scopes:
             raise_http_error(status_code=403, code="missing_scope")
         c = state.db.get_case(case_id=case_id)
         if c is None or c["customer_id"] != principal.customer_id:

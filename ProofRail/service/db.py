@@ -138,6 +138,19 @@ CREATE TABLE IF NOT EXISTS webhook_deliveries (
 
 CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_due ON webhook_deliveries(status, next_attempt_at);
 CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_customer ON webhook_deliveries(customer_id, created_at);
+
+CREATE TABLE IF NOT EXISTS jobs (
+  job_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_type TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  status TEXT NOT NULL,
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  run_at TEXT NOT NULL,
+  last_error TEXT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_jobs_due ON jobs(status, run_at);
 """
 
 
@@ -221,6 +234,18 @@ class ProofRailDb:
                 con.execute(
                     "CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_customer ON webhook_deliveries(customer_id, created_at)"
                 )
+
+            # Jobs table (pilot queue). Back-compat migration for older DBs.
+            if (
+                con.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='jobs'"
+                ).fetchone()
+                is None
+            ):
+                con.execute(
+                    "CREATE TABLE IF NOT EXISTS jobs (job_id INTEGER PRIMARY KEY AUTOINCREMENT, job_type TEXT NOT NULL, payload_json TEXT NOT NULL, status TEXT NOT NULL, attempt_count INTEGER NOT NULL DEFAULT 0, run_at TEXT NOT NULL, last_error TEXT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
+                )
+                con.execute("CREATE INDEX IF NOT EXISTS idx_jobs_due ON jobs(status, run_at)")
 
     def ensure_customer(self, customer_id: str, created_at: str) -> None:
         with self._connect() as con:
@@ -537,6 +562,27 @@ class ProofRailDb:
             for r in rows
         ]
 
+    def get_webhook_delivery(self, *, delivery_id: int) -> dict[str, Any] | None:
+        with self._connect() as con:
+            r = con.execute(
+                "SELECT delivery_id, subscription_id, customer_id, event_type, event_id, payload_json, status, attempt_count, next_attempt_at "
+                "FROM webhook_deliveries WHERE delivery_id = ?",
+                (int(delivery_id),),
+            ).fetchone()
+            if r is None:
+                return None
+        return {
+            "delivery_id": int(r["delivery_id"]),
+            "subscription_id": str(r["subscription_id"]),
+            "customer_id": str(r["customer_id"]),
+            "event_type": str(r["event_type"]),
+            "event_id": str(r["event_id"]),
+            "payload_json": str(r["payload_json"]),
+            "status": str(r["status"]),
+            "attempt_count": int(r["attempt_count"]),
+            "next_attempt_at": str(r["next_attempt_at"]),
+        }
+
     def mark_webhook_delivery_success(
         self, *, delivery_id: int, now: str, status_code: int
     ) -> None:
@@ -575,6 +621,81 @@ class ProofRailDb:
             con.execute(
                 "UPDATE webhook_deliveries SET status='failed', last_attempt_at=?, last_error=?, updated_at=? WHERE delivery_id=?",
                 (now, error, now, int(delivery_id)),
+            )
+
+    def webhook_delivery_counts(self) -> dict[str, int]:
+        with self._connect() as con:
+            rows = con.execute(
+                "SELECT status, COUNT(*) AS n FROM webhook_deliveries GROUP BY status"
+            ).fetchall()
+        out: dict[str, int] = {}
+        for r in rows:
+            out[str(r["status"])] = int(r["n"])
+        return out
+
+    def list_failed_webhook_deliveries(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        limit_n = max(1, min(500, int(limit)))
+        with self._connect() as con:
+            rows = con.execute(
+                "SELECT delivery_id, subscription_id, customer_id, event_type, event_id, status, attempt_count, next_attempt_at, last_attempt_at, last_status_code, last_error, created_at, updated_at "
+                "FROM webhook_deliveries WHERE status='failed' ORDER BY updated_at DESC LIMIT ?",
+                (limit_n,),
+            ).fetchall()
+        return [
+            {k: (r[k] if r[k] is not None else None) for k in r.keys()}  # type: ignore[attr-defined]
+            for r in rows
+        ]
+
+    # --- jobs queue (pilot) ---
+
+    def enqueue_job(self, *, job_type: str, payload_json: str, run_at: str, now: str) -> int:
+        with self._connect() as con:
+            cur = con.execute(
+                "INSERT INTO jobs(job_type, payload_json, status, attempt_count, run_at, created_at, updated_at) "
+                "VALUES (?, ?, 'queued', 0, ?, ?, ?)",
+                (job_type, payload_json, run_at, now, now),
+            )
+            return int(cur.lastrowid)
+
+    def list_due_jobs(self, *, now: str, limit: int = 50) -> list[dict[str, Any]]:
+        limit_n = max(1, min(int(limit), 500))
+        with self._connect() as con:
+            rows = con.execute(
+                "SELECT job_id, job_type, payload_json, status, attempt_count "
+                "FROM jobs WHERE status IN ('queued','retry') AND run_at <= ? "
+                "ORDER BY run_at ASC LIMIT ?",
+                (now, limit_n),
+            ).fetchall()
+        return [
+            {
+                "job_id": int(r["job_id"]),
+                "job_type": str(r["job_type"]),
+                "payload_json": str(r["payload_json"]),
+                "status": str(r["status"]),
+                "attempt_count": int(r["attempt_count"]),
+            }
+            for r in rows
+        ]
+
+    def mark_job_success(self, *, job_id: int, now: str) -> None:
+        with self._connect() as con:
+            con.execute(
+                "UPDATE jobs SET status='done', updated_at=? WHERE job_id=?",
+                (now, int(job_id)),
+            )
+
+    def mark_job_retry(self, *, job_id: int, now: str, run_at: str, error: str | None) -> None:
+        with self._connect() as con:
+            con.execute(
+                "UPDATE jobs SET status='retry', attempt_count=attempt_count+1, run_at=?, last_error=?, updated_at=? WHERE job_id=?",
+                (run_at, error, now, int(job_id)),
+            )
+
+    def mark_job_failed(self, *, job_id: int, now: str, error: str | None) -> None:
+        with self._connect() as con:
+            con.execute(
+                "UPDATE jobs SET status='failed', last_error=?, updated_at=? WHERE job_id=?",
+                (error, now, int(job_id)),
             )
 
     def get_screening(self, screening_id: str) -> dict[str, str] | None:

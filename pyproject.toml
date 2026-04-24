@@ -15,6 +15,10 @@ readme = "README.md"
   # API service (SaaS core)
   "fastapi>=0.112.0",
   "uvicorn>=0.30.0",
+  # Postgres backend (used when PROOFRAIL_DB_URL is set)
+  "psycopg[binary]>=3.2.0",
+  # S3-compatible object store (used when PROOFRAIL_S3_BUCKET is set)
+  "boto3>=1.34.0",
   # Webhooks deliveries
   "httpx>=0.27.0",
   # PDF exports for evidence packs
@@ -34,6 +38,7 @@ api = [
  [project.scripts]
 proofrail-evidence-api = "ProofRail.service.app:main"
 proofrail-api = "ProofRail.service.app:main"
+proofrail-worker = "ProofRail.service.worker:main"
  
  [tool.setuptools]
  include-package-data = true
