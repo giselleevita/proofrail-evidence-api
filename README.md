@@ -2,6 +2,31 @@
 
 FastAPI service for **audit-grade sanctions screening evidence packs**.
 
+### What it does
+
+ProofRail is an **evidence-first sanctions screening API** for fintech/crypto onboarding workflows.
+
+You send a subject (name + optional metadata) and get back:
+
+- **A decision**: `allow | block | review`
+- **An evidence pack id** (content-addressed) you can export as **JSON or auditor-ready PDF**
+- A **case workflow** (v2) so an analyst can record a decision and leave an append-only timeline
+- Optional **verifiable bundles**: a signed bundle containing the evidence pack + case timeline, plus a tamper-evident hash-chain over case events
+
+### Why it matters
+
+Most screening APIs return only a decision. ProofRail also returns the **portable proof** of how that decision was reached, so you can share it with:
+
+- banking partners
+- auditors
+- internal compliance review
+
+### Core artifacts
+
+- **Evidence Pack**: deterministic JSON payload stored as a content hash; exportable as PDF.
+- **Case timeline**: append-only events (screening created, comments, assignment, review decision).
+- **Case bundle (v2)**: `{bundle, signature}` where `bundle` includes the evidence pack + case + chained events, and `signature` includes a `key_id` for key rotation.
+
 ### UI (today)
 
 There is no separate web dashboard yet. The interactive UI is Swagger:
