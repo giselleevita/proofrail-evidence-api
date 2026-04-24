@@ -31,6 +31,7 @@ class AppConfig:
 
     usage_retention_days: int
     evidence_retention_days: int
+    jobs_retention_days: int
 
     max_request_bytes: int
 
@@ -98,6 +99,7 @@ def load_config(environ: dict[str, str] | None = None) -> AppConfig:
 
     usage_retention_days = int(env.get("PROOFRAIL_USAGE_RETENTION_DAYS", "30"))
     evidence_retention_days = int(env.get("PROOFRAIL_EVIDENCE_RETENTION_DAYS", "30"))
+    jobs_retention_days = int(env.get("PROOFRAIL_JOBS_RETENTION_DAYS", "7"))
     max_request_bytes = int(env.get("PROOFRAIL_MAX_REQUEST_BYTES", "1000000"))
 
     webhook_timeout_s = float(env.get("PROOFRAIL_WEBHOOK_TIMEOUT_S", "5.0"))
@@ -141,6 +143,7 @@ def load_config(environ: dict[str, str] | None = None) -> AppConfig:
         enable_scheduler=enable_scheduler,
         usage_retention_days=usage_retention_days,
         evidence_retention_days=evidence_retention_days,
+        jobs_retention_days=jobs_retention_days,
         max_request_bytes=max_request_bytes,
         webhook_timeout_s=webhook_timeout_s,
         webhook_max_attempts=webhook_max_attempts,
