@@ -247,6 +247,12 @@ class ProofRailDb:
                 )
                 con.execute("CREATE INDEX IF NOT EXISTS idx_jobs_due ON jobs(status, run_at)")
 
+            # Jobs leasing (safe migration): add locked_until column + index if missing.
+            cols = {r["name"] for r in con.execute("PRAGMA table_info(jobs)").fetchall()}
+            if "locked_until" not in cols:
+                con.execute("ALTER TABLE jobs ADD COLUMN locked_until TEXT NULL")
+            con.execute("CREATE INDEX IF NOT EXISTS idx_jobs_locked_until ON jobs(locked_until)")
+
     def ensure_customer(self, customer_id: str, created_at: str) -> None:
         with self._connect() as con:
             con.execute(
@@ -657,15 +663,25 @@ class ProofRailDb:
             )
             return int(cur.lastrowid)
 
-    def list_due_jobs(self, *, now: str, limit: int = 50) -> list[dict[str, Any]]:
+    def claim_due_jobs(
+        self, *, now: str, locked_until: str, limit: int = 50
+    ) -> list[dict[str, Any]]:
         limit_n = max(1, min(int(limit), 500))
         with self._connect() as con:
+            con.execute("BEGIN IMMEDIATE")
             rows = con.execute(
                 "SELECT job_id, job_type, payload_json, status, attempt_count "
-                "FROM jobs WHERE status IN ('queued','retry') AND run_at <= ? "
+                "FROM jobs "
+                "WHERE status IN ('queued','retry') AND run_at <= ? AND (locked_until IS NULL OR locked_until <= ?) "
                 "ORDER BY run_at ASC LIMIT ?",
-                (now, limit_n),
+                (now, now, limit_n),
             ).fetchall()
+            job_ids = [int(r["job_id"]) for r in rows]
+            if job_ids:
+                con.execute(
+                    f"UPDATE jobs SET locked_until = ?, updated_at = ? WHERE job_id IN ({','.join(['?'] * len(job_ids))})",
+                    (locked_until, now, *job_ids),
+                )
         return [
             {
                 "job_id": int(r["job_id"]),
