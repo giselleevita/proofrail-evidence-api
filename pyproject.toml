@@ -15,12 +15,15 @@ readme = "README.md"
   # API service (SaaS core)
   "fastapi>=0.112.0",
   "uvicorn>=0.30.0",
+  # Webhooks deliveries
+  "httpx>=0.27.0",
+  # PDF exports for evidence packs
+  "reportlab>=4.0.0",
  ]
  
  [project.optional-dependencies]
  dev = [
    "ruff>=0.6.0",
-  "httpx>=0.27.0",
  ]
 api = [
   # Extra marker for service-only installs (kept for convenience)

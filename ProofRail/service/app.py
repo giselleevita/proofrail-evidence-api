@@ -1,496 +1,188 @@
 from __future__ import annotations
 
+import json
 import os
-import queue
 import threading
-import time
-import uuid
-from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, field_validator
+from fastapi import Depends, FastAPI, Request, Response
 
-from ProofRail.service.auth import ApiPrincipal, generate_api_key, hash_api_key, parse_scopes
-from ProofRail.service.cache import IngestionCache
-from ProofRail.service.db import DbConfig, ProofRailDb
+from ProofRail.service.api.schemas import (
+    ERROR_RESPONSES,
+    CreateKeyRequest,
+    CreateKeyResponse,
+    EvidencePack,
+    EvidencePackSignatureResponse,
+    RevokeKeyRequest,
+    RotateKeyRequest,
+    ScreenRequest,
+    ScreenResponse,
+    V1AdminRunWebhookDeliveriesResponse,
+    V2CaseDetail,
+    V2CaseEvent,
+    V2CaseEvidenceBundle,
+    V2CaseEvidenceBundleResponse,
+    V2CaseEvidenceBundleSignature,
+    V2CaseSummary,
+    V2ChainedCaseEvent,
+    V2CreateCaseEventRequest,
+    V2CreateScreeningRequest,
+    V2CreateScreeningResponse,
+    V2CreateWebhookSubscriptionRequest,
+    V2ReviewDecisionRequest,
+    V2ReviewDecisionResponse,
+    V2VerifyCaseEvidenceBundleRequest,
+    V2VerifyCaseEvidenceBundleResponse,
+    V2WebhookSubscription,
+    VerifyEvidencePackRequest,
+    VerifyEvidencePackResponse,
+)
+from ProofRail.service.auth import ApiPrincipal, generate_api_key, hash_api_key
+from ProofRail.service.config import load_config
 from ProofRail.service.ingestion import ingest_sources
-from ProofRail.service.metrics import UsageEvent
+from ProofRail.service.ingestion_demo import ingest_demo
+from ProofRail.service.middleware import (
+    install_exception_handlers,
+    install_request_middleware,
+    principal_from_request,
+    raise_http_error,
+    require_admin_factory,
+)
 from ProofRail.service.models import Decision
-from ProofRail.service.ratelimit import RateLimiter
-from ProofRail.service.scheduler import RefreshScheduler
-from ProofRail.service.screening import NameSetCache, compute_screening_key, screen_subject_name
+from ProofRail.service.pdf_export import render_evidence_pack_pdf
+from ProofRail.service.screening import compute_screening_key, screen_subject_name
 from ProofRail.service.signing import sign_bytes, verify_bytes
-from ProofRail.service.storage import EvidenceStore, canonical_json_bytes, sha256_hex
+from ProofRail.service.state import attach_lifespan, build_state
+from ProofRail.service.storage import canonical_json_bytes, sha256_hex
 from ProofRail.service.utils import utc_now_iso
-
-
-class _ScreenCache:
-    def __init__(self, *, max_entries: int = 2048) -> None:
-        from collections import OrderedDict
-
-        self.max_entries = int(max_entries)
-        self._lock = threading.Lock()
-        self._data: OrderedDict[str, str] = OrderedDict()
-
-    def get(self, key: str) -> str | None:
-        with self._lock:
-            v = self._data.get(key)
-            if v is None:
-                return None
-            self._data.move_to_end(key)
-            return v
-
-    def set(self, key: str, value: str) -> None:
-        with self._lock:
-            self._data[key] = value
-            self._data.move_to_end(key)
-            while len(self._data) > self.max_entries:
-                self._data.popitem(last=False)
-
-
-class Subject(BaseModel):
-    subject_id: str | None = None
-    name: str = Field(min_length=1, max_length=512)
-
-
-class ScreenRequest(BaseModel):
-    subject: Subject
-    retrieval_ts: str | None = None
-
-
-class ScreenResponse(BaseModel):
-    decision: Literal["allow", "block", "review"]
-    evidence_pack_id: str
-    list_version: str
-    hits: list[str]
-
-
-class ErrorInfo(BaseModel):
-    code: str
-    message: str
-    request_id: str | None = None
-    details: dict[str, Any] | None = None
-
-
-class ErrorResponse(BaseModel):
-    error: ErrorInfo
-
-
-class CreateKeyRequest(BaseModel):
-    customer_id: str = Field(min_length=1, max_length=128)
-    scopes: list[str] | str | None = None
-
-    @field_validator("scopes", mode="before")
-    @classmethod
-    def _normalize_scopes(cls, v: Any) -> list[str]:
-        if v is None:
-            return ["write:screen", "read:evidence"]
-        if isinstance(v, str):
-            return [s.strip() for s in v.split(",") if s.strip()]
-        if isinstance(v, list):
-            out: list[str] = []
-            for item in v:
-                if not isinstance(item, str):
-                    raise ValueError("scopes must be strings")
-                s = item.strip()
-                if s:
-                    out.append(s)
-            return out
-        raise ValueError("scopes must be a string, list of strings, or null")
-
-
-class CreateKeyResponse(BaseModel):
-    customer_id: str
-    api_key_id: str
-    api_key: str
-    scopes: list[str]
-
-
-class RevokeKeyRequest(BaseModel):
-    api_key_id: str = Field(min_length=1, max_length=128)
-
-
-class RotateKeyRequest(BaseModel):
-    customer_id: str = Field(min_length=1, max_length=128)
-    scopes: list[str] | str | None = None
-
-    @field_validator("scopes", mode="before")
-    @classmethod
-    def _normalize_scopes(cls, v: Any) -> list[str]:
-        if v is None:
-            return ["write:screen", "read:evidence"]
-        if isinstance(v, str):
-            return [s.strip() for s in v.split(",") if s.strip()]
-        if isinstance(v, list):
-            out: list[str] = []
-            for item in v:
-                if not isinstance(item, str):
-                    raise ValueError("scopes must be strings")
-                s = item.strip()
-                if s:
-                    out.append(s)
-            return out
-        raise ValueError("scopes must be a string, list of strings, or null")
-
-
-class EvidencePack(BaseModel):
-    schema_version: str
-    created_at: str
-    customer_id: str
-    list_version: str
-    screen_key: str
-    ingestion: dict[str, Any]
-    input: dict[str, Any]
-    result: dict[str, Any]
-    determinism: dict[str, Any]
-
-
-class EvidencePackSignatureResponse(BaseModel):
-    evidence_pack_id: str
-    signature: str
-
-
-class VerifyEvidencePackRequest(BaseModel):
-    evidence_pack: dict[str, Any]
-    signature: str
-
-
-class VerifyEvidencePackResponse(BaseModel):
-    valid: bool
-
-
-ERROR_RESPONSES = {
-    401: {"model": ErrorResponse},
-    403: {"model": ErrorResponse},
-    404: {"model": ErrorResponse},
-    409: {"model": ErrorResponse},
-    422: {"model": ErrorResponse},
-    429: {"model": ErrorResponse},
-    500: {"model": ErrorResponse},
-}
-
-
-def _error_payload(
-    *,
-    code: str,
-    message: str | None = None,
-    request_id: str | None = None,
-    details: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    return ErrorResponse(
-        error=ErrorInfo(
-            code=code,
-            message=message or code,
-            request_id=request_id,
-            details=details,
-        )
-    ).model_dump()
-
-
-def _error_response(
-    *,
-    status_code: int,
-    code: str,
-    message: str | None = None,
-    request_id: str | None = None,
-    details: dict[str, Any] | None = None,
-) -> JSONResponse:
-    resp = JSONResponse(
-        status_code=status_code,
-        content=_error_payload(code=code, message=message, request_id=request_id, details=details),
-    )
-    if request_id:
-        resp.headers["x-request-id"] = request_id
-    if status_code == 429:
-        resp.headers.setdefault("retry-after", "1")
-    return resp
-
-
-def _raise_http_error(
-    *,
-    status_code: int,
-    code: str,
-    message: str | None = None,
-    details: dict[str, Any] | None = None,
-) -> None:
-    raise HTTPException(
-        status_code=status_code,
-        detail={"code": code, "message": message or code, "details": details},
-    )
+from ProofRail.service.webhooks import build_event_payload, deliver_once, next_attempt_ts
 
 
 def create_app(*, ingest_func=ingest_sources) -> FastAPI:
-    app: FastAPI  # forward for lifespan closure
+    cfg = load_config()
+    state = build_state(cfg)
 
-    store_root = Path(os.environ.get("PROOFRAIL_STORE_DIR", "proofrail_store"))
-    raw_dir = Path(os.environ.get("PROOFRAIL_RAW_DIR", str(store_root / "raw_fetches")))
-    store = EvidenceStore(store_root)
+    app = FastAPI(title="ProofRail API", version="0.1.0")
+    attach_lifespan(app, state)
+    app.state.proofrail = state
 
-    db_path = Path(os.environ.get("PROOFRAIL_DB_PATH", str(store_root / "proofrail.sqlite3")))
-    db = ProofRailDb(DbConfig(path=db_path))
+    install_exception_handlers(app, state)
+    install_request_middleware(app, state)
 
-    admin_key = os.environ.get("PROOFRAIL_ADMIN_KEY")
-    signing_secret = os.environ.get("PROOFRAIL_SIGNING_SECRET", "").encode("utf-8")
+    require_admin = require_admin_factory(state)
 
-    cache_ttl_s = int(os.environ.get("PROOFRAIL_INGEST_TTL_SECONDS", "3600"))
-    ingest_cache = IngestionCache(ttl_seconds=cache_ttl_s)
-    global_ingest_key = "__global__"
+    def _emit_webhooks(
+        *, customer_id: str, event_type: str, event_id: str, data: dict[str, Any]
+    ) -> None:
+        payload_json = build_event_payload(
+            event_type=event_type, event_id=event_id, customer_id=customer_id, data=data
+        )
+        subs = state.db.list_webhook_subscriptions(customer_id=customer_id)
+        for s in subs:
+            if not s.get("active"):
+                continue
+            evs = s.get("events") or []
+            if isinstance(evs, list) and (event_type in evs or "*" in evs):
+                state.db.enqueue_webhook_delivery(
+                    subscription_id=str(s["subscription_id"]),
+                    customer_id=customer_id,
+                    event_type=event_type,
+                    event_id=event_id,
+                    payload_json=payload_json,
+                    now=utc_now_iso(),
+                )
 
-    # Small in-process cache: screen_key -> evidence_pack_id
-    screen_cache = _ScreenCache(
-        max_entries=int(os.environ.get("PROOFRAIL_SCREEN_CACHE_MAX", "2048"))
+    @app.post(
+        "/v1/admin/webhooks/deliveries/run",
+        response_model=V1AdminRunWebhookDeliveriesResponse,
+        dependencies=[Depends(require_admin)],
+        responses=ERROR_RESPONSES,
     )
-
-    # Rate limiting (per API key id)
-    rpm = int(os.environ.get("PROOFRAIL_RPM", "120"))
-    limiter = RateLimiter(capacity=rpm, refill_per_s=rpm / 60.0)
-    limiter_by_customer: dict[str, RateLimiter] = {}
-    limiter_lock = threading.Lock()
-
-    scheduler = RefreshScheduler()
-    name_sets_cache = NameSetCache(max_entries=64)
-
-    usage_queue: queue.Queue[UsageEvent] = queue.Queue(
-        maxsize=int(os.environ.get("PROOFRAIL_USAGE_QUEUE_MAX", "50000"))
-    )
-    usage_batch_size = int(os.environ.get("PROOFRAIL_USAGE_BATCH_SIZE", "200"))
-    usage_flush_interval_s = float(os.environ.get("PROOFRAIL_USAGE_FLUSH_INTERVAL_S", "1.0"))
-    usage_stop = threading.Event()
-    usage_thread: threading.Thread | None = None
-
-    def usage_flusher() -> None:
-        batch: list[UsageEvent] = []
-        last_flush = time.time()
-        while not usage_stop.is_set():
-            timeout = max(0.05, usage_flush_interval_s - (time.time() - last_flush))
-            try:
-                ev = usage_queue.get(timeout=timeout)
-                batch.append(ev)
-            except queue.Empty:
-                pass
-
-            should_flush = len(batch) >= usage_batch_size or (
-                batch and (time.time() - last_flush) >= usage_flush_interval_s
-            )
-            if not should_flush:
+    def admin_run_webhook_deliveries(
+        request: Request,
+        limit: int = 50,
+    ) -> V1AdminRunWebhookDeliveriesResponse:
+        now = utc_now_iso()
+        due = state.db.list_due_webhook_deliveries(now=now, limit=limit)
+        attempted = 0
+        delivered = 0
+        retried = 0
+        failed = 0
+        for d in due:
+            attempted += 1
+            sub = state.db.get_webhook_subscription(subscription_id=str(d["subscription_id"]))
+            if sub is None or not sub.get("active"):
+                state.db.mark_webhook_delivery_failed(
+                    delivery_id=int(d["delivery_id"]), now=now, error="subscription_missing"
+                )
+                failed += 1
                 continue
 
-            payloads = [
-                {
-                    "ts": e.ts,
-                    "api_key_id": e.api_key_id,
-                    "customer_id": e.customer_id,
-                    "route": e.route,
-                    "status_code": e.status_code,
-                    "latency_ms": e.latency_ms,
-                    "request_id": e.request_id,
-                }
-                for e in batch
-            ]
-            try:
-                db.insert_usage_events(payloads)
-            except Exception:
-                # Best-effort; drop on error to keep request path safe.
-                pass
-            batch.clear()
-            last_flush = time.time()
-
-        # Final best-effort flush on shutdown
-        if batch:
-            try:
-                db.insert_usage_events(
-                    [
-                        {
-                            "ts": e.ts,
-                            "api_key_id": e.api_key_id,
-                            "customer_id": e.customer_id,
-                            "route": e.route,
-                            "status_code": e.status_code,
-                            "latency_ms": e.latency_ms,
-                            "request_id": e.request_id,
-                        }
-                        for e in batch
-                    ]
+            res = deliver_once(
+                url=str(sub["url"]),
+                secret=str(sub["secret"]),
+                event_type=str(d["event_type"]),
+                event_id=str(d["event_id"]),
+                payload_json=str(d["payload_json"]),
+                timeout_s=float(state.cfg.webhook_timeout_s),
+            )
+            if res.ok:
+                state.db.mark_webhook_delivery_success(
+                    delivery_id=int(d["delivery_id"]),
+                    now=now,
+                    status_code=int(res.status_code or 0),
                 )
-            except Exception:
-                pass
-
-    @asynccontextmanager
-    async def lifespan(_app: FastAPI):
-        nonlocal usage_thread
-        usage_thread = threading.Thread(target=usage_flusher, daemon=True)
-        usage_thread.start()
-        try:
-            yield
-        finally:
-            usage_stop.set()
-            if usage_thread is not None:
-                usage_thread.join(timeout=2.0)
-
-    app = FastAPI(title="ProofRail API", version="0.1.0", lifespan=lifespan)
-
-    def require_admin(x_admin_key: str | None = Header(default=None)) -> None:
-        if admin_key is None:
-            _raise_http_error(status_code=503, code="admin_not_configured")
-        if x_admin_key != admin_key:
-            _raise_http_error(status_code=401, code="admin_unauthorized")
-
-    def principal_from_request(request: Request) -> ApiPrincipal:
-        principal = getattr(request.state, "principal", None)
-        if principal is None:
-            _raise_http_error(status_code=401, code="missing_api_key")
-        return principal
-
-    @app.exception_handler(HTTPException)
-    async def http_exception_handler(request: Request, exc: HTTPException):
-        request_id = getattr(request.state, "request_id", None)
-        detail = exc.detail
-        if isinstance(detail, dict) and "code" in detail:
-            code = str(detail.get("code"))
-            message = str(detail.get("message") or code)
-            details = detail.get("details")
-            normalized_details: dict[str, Any] | None
-            if details is None or isinstance(details, dict):
-                normalized_details = details
+                delivered += 1
             else:
-                normalized_details = {"detail": details}
-            return _error_response(
-                status_code=exc.status_code,
-                code=code,
-                message=message,
-                request_id=request_id,
-                details=normalized_details,
-            )
-        if isinstance(detail, str):
-            return _error_response(
-                status_code=exc.status_code,
-                code=detail,
-                message=detail,
-                request_id=request_id,
-            )
-        return _error_response(
-            status_code=exc.status_code,
-            code="http_error",
-            message="http_error",
-            request_id=request_id,
-            details={"detail": detail},
-        )
-
-    @app.exception_handler(RequestValidationError)
-    async def validation_exception_handler(request: Request, exc: RequestValidationError):
-        request_id = getattr(request.state, "request_id", None)
-        return _error_response(
-            status_code=422,
-            code="validation_error",
-            message="validation_error",
-            request_id=request_id,
-            details={"errors": exc.errors()},
-        )
-
-    @app.exception_handler(Exception)
-    async def unhandled_exception_handler(request: Request, exc: Exception):
-        request_id = getattr(request.state, "request_id", None)
-        return _error_response(
-            status_code=500,
-            code="internal_error",
-            message="internal_error",
-            request_id=request_id,
-        )
-
-    @app.middleware("http")
-    async def request_log_and_limits(request: Request, call_next):
-        request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
-        request.state.request_id = request_id
-        t0 = time.perf_counter()
-        principal: ApiPrincipal | None = None
-        try:
-            # Only enforce rate limiting on /v1/* endpoints that are not admin routes.
-            if request.url.path.startswith("/v1/") and not request.url.path.startswith(
-                "/v1/admin/"
-            ):
-                api_key = request.headers.get("x-api-key")
-                if not api_key:
-                    anon_key = request.client.host if request.client else "unknown"
-                    if not limiter.allow(f"anon:{anon_key}"):
-                        return _error_response(
-                            status_code=429, code="rate_limited", request_id=request_id
-                        )
-                    return _error_response(
-                        status_code=401, code="missing_api_key", request_id=request_id
+                attempts = int(d["attempt_count"]) + 1
+                if attempts >= int(state.cfg.webhook_max_attempts):
+                    state.db.mark_webhook_delivery_failed(
+                        delivery_id=int(d["delivery_id"]), now=now, error=res.error
                     )
-                resolved = db.resolve_api_key(hash_api_key(api_key))
-                if resolved is None:
-                    anon_key = request.client.host if request.client else "unknown"
-                    if not limiter.allow(f"anon:{anon_key}"):
-                        return _error_response(
-                            status_code=429, code="rate_limited", request_id=request_id
-                        )
-                    return _error_response(
-                        status_code=401, code="invalid_api_key", request_id=request_id
-                    )
-                api_key_id, customer_id, scopes = resolved
-                principal = ApiPrincipal(
-                    customer_id=customer_id, api_key_id=api_key_id, scopes=parse_scopes(scopes)
-                )
-                request.state.principal = principal
-                # Plan override (billing hook): rpm can be configured per customer.
-                plan = db.get_plan(customer_id)
-                effective_rpm = int(plan["rpm"]) if plan and "rpm" in plan else rpm
-                if effective_rpm == rpm:
-                    effective_limiter = limiter
+                    failed += 1
                 else:
-                    with limiter_lock:
-                        effective_limiter = limiter_by_customer.get(customer_id)
-                        if (
-                            effective_limiter is None
-                            or int(effective_limiter.capacity) != effective_rpm
-                        ):
-                            effective_limiter = RateLimiter(
-                                capacity=effective_rpm, refill_per_s=effective_rpm / 60.0
-                            )
-                            limiter_by_customer[customer_id] = effective_limiter
-                if not effective_limiter.allow(api_key_id):
-                    return _error_response(
-                        status_code=429, code="rate_limited", request_id=request_id
+                    state.db.mark_webhook_delivery_retry(
+                        delivery_id=int(d["delivery_id"]),
+                        now=now,
+                        next_attempt_at=next_attempt_ts(
+                            now=now,
+                            attempt_count=int(d["attempt_count"]),
+                            retry_base_s=float(state.cfg.webhook_retry_base_s),
+                        ),
+                        status_code=res.status_code,
+                        error=res.error,
                     )
-            response = await call_next(request)
-        except HTTPException as exc:
-            response = await http_exception_handler(request, exc)
-        # Minimal structured log line; replace with proper logger later.
-        duration_ms = (time.perf_counter() - t0) * 1000.0
-        response.headers["x-request-id"] = request_id
-        response.headers["x-proofrail-latency-ms"] = f"{duration_ms:.2f}"
-        if (
-            principal is not None
-            and request.url.path.startswith("/v1/")
-            and not request.url.path.startswith("/v1/admin/")
-        ):
-            try:
-                usage_queue.put_nowait(
-                    UsageEvent(
-                        ts=utc_now_iso(),
-                        api_key_id=principal.api_key_id,
-                        customer_id=principal.customer_id,
-                        route=request.url.path,
-                        status_code=int(getattr(response, "status_code", 0)),
-                        latency_ms=float(duration_ms),
-                        request_id=request_id,
-                    )
-                )
-            except queue.Full:
-                pass
-        return response
+                    retried += 1
+
+        state.db.insert_audit_event(
+            ts=now,
+            actor="admin",
+            action="webhooks_deliveries_run",
+            request_id=getattr(request.state, "request_id", None),
+            details_json=json.dumps(
+                {
+                    "attempted": attempted,
+                    "delivered": delivered,
+                    "retried": retried,
+                    "failed": failed,
+                }
+            ),
+        )
+        return V1AdminRunWebhookDeliveriesResponse(
+            attempted=attempted, delivered=delivered, retried=retried, failed=failed
+        )
+
+    global_ingest_key = "__global__"
+    demo_mode = os.environ.get("PROOFRAIL_DEMO_MODE", "0") == "1"
+    if ingest_func is ingest_sources and demo_mode:
+        ingest_func = ingest_demo
 
     def _parse_iso_z(ts: str) -> datetime:
         return datetime.fromisoformat(ts.replace("Z", "+00:00"))
 
     def _gc_raw_fetches(*, cutoff: datetime, customer_id: str | None, dry_run: bool) -> int:
-        root = raw_dir / (customer_id or "")
+        root = state.cfg.raw_dir / (customer_id or "")
         if not root.exists():
             return 0
         deleted = 0
@@ -510,27 +202,22 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
 
     @app.post("/v1/admin/gc/run", dependencies=[Depends(require_admin)], responses=ERROR_RESPONSES)
     def admin_gc_run(
+        request: Request,
         customer_id: str | None = None,
         dry_run: bool = True,
         usage_retention_days: int | None = None,
         evidence_retention_days: int | None = None,
     ) -> dict[str, Any]:
         now = datetime.now(UTC)
-        usage_days = int(
-            usage_retention_days or os.environ.get("PROOFRAIL_USAGE_RETENTION_DAYS", "30")
-        )
+        usage_days = int(usage_retention_days or state.cfg.usage_retention_days)
         if customer_id is not None:
-            plan = db.get_plan(customer_id)
+            plan = state.db.get_plan(customer_id)
             plan_days = int(plan["evidence_retention_days"]) if plan else None
             evidence_days = int(
-                evidence_retention_days
-                or plan_days
-                or os.environ.get("PROOFRAIL_EVIDENCE_RETENTION_DAYS", "30")
+                evidence_retention_days or plan_days or state.cfg.evidence_retention_days
             )
         else:
-            evidence_days = int(
-                evidence_retention_days or os.environ.get("PROOFRAIL_EVIDENCE_RETENTION_DAYS", "30")
-            )
+            evidence_days = int(evidence_retention_days or state.cfg.evidence_retention_days)
 
         usage_cutoff = now - timedelta(days=usage_days)
         evidence_cutoff = now - timedelta(days=evidence_days)
@@ -538,17 +225,40 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
         deleted_usage = (
             0
             if dry_run
-            else db.delete_usage_events_before(
+            else state.db.delete_usage_events_before(
                 usage_cutoff.replace(microsecond=0).isoformat().replace("+00:00", "Z")
             )
         )
-        deleted_packs = store.delete_packs_before(
+        deleted_packs = state.store.delete_packs_before(
             cutoff=evidence_cutoff, customer_id=customer_id, dry_run=dry_run
         )
         deleted_raw = _gc_raw_fetches(
             cutoff=evidence_cutoff, customer_id=customer_id, dry_run=dry_run
         )
-        deleted_blobs = store.delete_unreferenced_blobs(cutoff=evidence_cutoff, dry_run=dry_run)
+        deleted_blobs = state.store.delete_unreferenced_blobs(
+            cutoff=evidence_cutoff, dry_run=dry_run
+        )
+
+        if not dry_run:
+            state.db.insert_audit_event(
+                ts=utc_now_iso(),
+                actor="admin",
+                action="gc_run",
+                request_id=getattr(request.state, "request_id", None),
+                details_json=json.dumps(
+                    {
+                        "customer_id": customer_id,
+                        "usage_retention_days": usage_days,
+                        "evidence_retention_days": evidence_days,
+                        "deleted": {
+                            "usage_events": deleted_usage,
+                            "evidence_packs": deleted_packs,
+                            "raw_fetch_files": deleted_raw,
+                            "unreferenced_blobs": deleted_blobs,
+                        },
+                    }
+                ),
+            )
 
         return {
             "dry_run": bool(dry_run),
@@ -571,26 +281,26 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
     def readyz() -> dict[str, str]:
         try:
             # DB ping
-            with db._connect() as con:  # noqa: SLF001
+            with state.db._connect() as con:  # noqa: SLF001
                 con.execute("SELECT 1").fetchone()
             # Store dir write check
-            probe = store_root / ".readyz"
+            probe = state.cfg.store_root / ".readyz"
             probe.write_text("ok", encoding="utf-8")
             probe.unlink(missing_ok=True)
         except Exception:
-            _raise_http_error(status_code=503, code="not_ready")
+            raise_http_error(status_code=503, code="not_ready")
         return {"status": "ready"}
 
     @app.get("/v1/usage/summary")
     # response_model dict is fine here; keep simple for SDKs.
     def usage_summary(
         since_ts: str,
-        principal: ApiPrincipal = Depends(principal_from_request),
+        principal=Depends(principal_from_request),
     ) -> dict[str, int]:
         # usage endpoint requires read:evidence scope (same as evidence access).
         if "read:evidence" not in principal.scopes:
-            _raise_http_error(status_code=403, code="missing_scope")
-        return db.usage_summary(principal.customer_id, since_ts)
+            raise_http_error(status_code=403, code="missing_scope")
+        return state.db.usage_summary(principal.customer_id, since_ts)
 
     @app.get(
         "/v1/evidence-packs/{evidence_pack_id}/signature",
@@ -598,27 +308,57 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
         responses=ERROR_RESPONSES,
     )
     def get_evidence_pack_signature(
-        evidence_pack_id: str, principal: ApiPrincipal = Depends(principal_from_request)
+        evidence_pack_id: str, principal=Depends(principal_from_request)
     ) -> EvidencePackSignatureResponse:
         if "read:evidence" not in principal.scopes:
-            _raise_http_error(status_code=403, code="missing_scope")
-        if not store.has_pack(evidence_pack_id):
-            _raise_http_error(status_code=404, code="evidence_pack_not_found")
+            raise_http_error(status_code=403, code="missing_scope")
+        if not state.store.has_pack(evidence_pack_id):
+            raise_http_error(status_code=404, code="evidence_pack_not_found")
         try:
-            pack = store.get_pack(evidence_pack_id)
+            pack = state.store.get_pack(evidence_pack_id)
         except ValueError as exc:
             if str(exc) == "evidence_pack_integrity_failed":
-                _raise_http_error(status_code=409, code="evidence_pack_integrity_failed")
+                raise_http_error(status_code=409, code="evidence_pack_integrity_failed")
             raise
         if pack.get("customer_id") != principal.customer_id:
-            _raise_http_error(status_code=404, code="evidence_pack_not_found")
-        if not signing_secret:
-            _raise_http_error(status_code=503, code="signing_not_configured")
+            raise_http_error(status_code=404, code="evidence_pack_not_found")
+        if not state.cfg.signing_secret:
+            raise_http_error(status_code=503, code="signing_not_configured")
         payload = canonical_json_bytes(pack)
         return EvidencePackSignatureResponse(
             evidence_pack_id=evidence_pack_id,
-            signature=sign_bytes(signing_secret, payload),
+            signature=sign_bytes(state.cfg.signing_secret, payload),
         )
+
+    @app.get("/v1/evidence-packs/{evidence_pack_id}/export.pdf", responses=ERROR_RESPONSES)
+    def export_evidence_pack_pdf(
+        evidence_pack_id: str,
+        request: Request,
+        principal=Depends(principal_from_request),
+    ) -> Response:
+        if "read:evidence" not in principal.scopes:
+            raise_http_error(status_code=403, code="missing_scope")
+        if not state.store.has_pack(evidence_pack_id):
+            raise_http_error(status_code=404, code="evidence_pack_not_found")
+        try:
+            pack = state.store.get_pack(evidence_pack_id)
+        except ValueError as exc:
+            if str(exc) == "evidence_pack_integrity_failed":
+                raise_http_error(status_code=409, code="evidence_pack_integrity_failed")
+            raise
+        if pack.get("customer_id") != principal.customer_id:
+            raise_http_error(status_code=404, code="evidence_pack_not_found")
+
+        request_id = getattr(request.state, "request_id", None)
+        pdf_bytes = render_evidence_pack_pdf(
+            pack=pack,
+            evidence_pack_id=evidence_pack_id,
+            request_id=request_id,
+        )
+        headers = {
+            "content-disposition": f'attachment; filename="evidence-pack-{evidence_pack_id}.pdf"',
+        }
+        return Response(content=pdf_bytes, media_type="application/pdf", headers=headers)
 
     @app.post(
         "/v1/evidence-packs/verify",
@@ -627,16 +367,16 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
     )
     def verify_evidence_pack(
         req: VerifyEvidencePackRequest,
-        principal: ApiPrincipal = Depends(principal_from_request),
+        principal=Depends(principal_from_request),
     ) -> VerifyEvidencePackResponse:
         if "read:evidence" not in principal.scopes:
-            _raise_http_error(status_code=403, code="missing_scope")
-        if not signing_secret:
-            _raise_http_error(status_code=503, code="signing_not_configured")
+            raise_http_error(status_code=403, code="missing_scope")
+        if not state.cfg.signing_secret:
+            raise_http_error(status_code=503, code="signing_not_configured")
         # Verify signature only; caller can also check customer_id match themselves.
         payload = canonical_json_bytes(req.evidence_pack)
         return VerifyEvidencePackResponse(
-            valid=verify_bytes(signing_secret, payload, req.signature)
+            valid=verify_bytes(state.cfg.signing_secret, payload, req.signature)
         )
 
     @app.post(
@@ -645,13 +385,20 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
         dependencies=[Depends(require_admin)],
         responses=ERROR_RESPONSES,
     )
-    def admin_create_key(req: CreateKeyRequest) -> CreateKeyResponse:
+    def admin_create_key(req: CreateKeyRequest, request: Request) -> CreateKeyResponse:
         # Create customer if not exists, then create key.
-        db.ensure_customer(req.customer_id, utc_now_iso())
+        state.db.ensure_customer(req.customer_id, utc_now_iso())
         api_key = generate_api_key()
         api_key_id = sha256_hex(api_key.encode("utf-8"))[:16]
-        db.create_api_key(
+        state.db.create_api_key(
             api_key_id, req.customer_id, hash_api_key(api_key), ",".join(req.scopes), utc_now_iso()
+        )
+        state.db.insert_audit_event(
+            ts=utc_now_iso(),
+            actor="admin",
+            action="key_create",
+            request_id=getattr(request.state, "request_id", None),
+            details_json=json.dumps({"customer_id": req.customer_id, "api_key_id": api_key_id}),
         )
         return CreateKeyResponse(
             customer_id=req.customer_id, api_key_id=api_key_id, api_key=api_key, scopes=req.scopes
@@ -662,8 +409,15 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
         dependencies=[Depends(require_admin)],
         responses=ERROR_RESPONSES,
     )
-    def admin_revoke_key(req: RevokeKeyRequest) -> dict[str, str]:
-        db.revoke_api_key(req.api_key_id, utc_now_iso())
+    def admin_revoke_key(req: RevokeKeyRequest, request: Request) -> dict[str, str]:
+        state.db.revoke_api_key(req.api_key_id, utc_now_iso())
+        state.db.insert_audit_event(
+            ts=utc_now_iso(),
+            actor="admin",
+            action="key_revoke",
+            request_id=getattr(request.state, "request_id", None),
+            details_json=json.dumps({"api_key_id": req.api_key_id}),
+        )
         return {"status": "revoked"}
 
     @app.post(
@@ -672,17 +426,24 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
         dependencies=[Depends(require_admin)],
         responses=ERROR_RESPONSES,
     )
-    def admin_rotate_key(req: RotateKeyRequest) -> CreateKeyResponse:
+    def admin_rotate_key(req: RotateKeyRequest, request: Request) -> CreateKeyResponse:
         # Rotation creates a new key; caller can revoke old ones separately.
-        db.ensure_customer(req.customer_id, utc_now_iso())
+        state.db.ensure_customer(req.customer_id, utc_now_iso())
         api_key = generate_api_key()
         api_key_id = sha256_hex(api_key.encode("utf-8"))[:16]
-        db.create_api_key(
+        state.db.create_api_key(
             api_key_id,
             req.customer_id,
             hash_api_key(api_key),
             ",".join(req.scopes),
             utc_now_iso(),
+        )
+        state.db.insert_audit_event(
+            ts=utc_now_iso(),
+            actor="admin",
+            action="key_rotate",
+            request_id=getattr(request.state, "request_id", None),
+            details_json=json.dumps({"customer_id": req.customer_id, "api_key_id": api_key_id}),
         )
         return CreateKeyResponse(
             customer_id=req.customer_id,
@@ -701,9 +462,11 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
 
         def run() -> None:
             artifact = ingest_func(
-                store=store, output_dir=raw_dir / _key, retrieval_ts=retrieval_ts
+                store=state.store,
+                output_dir=state.cfg.raw_dir / _key,
+                retrieval_ts=retrieval_ts,
             )
-            ingest_cache.put(_key, artifact)
+            state.ingest_cache.put(_key, artifact)
 
         t = threading.Thread(target=run, daemon=True)
         t.start()
@@ -717,17 +480,33 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
         _key = customer_id or global_ingest_key
 
         def run() -> None:
-            artifact = ingest_func(store=store, output_dir=raw_dir / _key, retrieval_ts=None)
-            ingest_cache.put(_key, artifact)
+            artifact = ingest_func(
+                store=state.store, output_dir=state.cfg.raw_dir / _key, retrieval_ts=None
+            )
+            state.ingest_cache.put(_key, artifact)
 
-        scheduler.start(_key, interval_seconds, run)
+        if not state.cfg.enable_scheduler:
+            raise_http_error(status_code=409, code="scheduler_disabled")
+        state.scheduler.start(_key, interval_seconds, run)
         return {"status": "scheduled", "interval_seconds": interval_seconds, "key": _key}
 
     @app.post("/v1/admin/ingest/schedule/stop", dependencies=[Depends(require_admin)])
     def stop_schedule(customer_id: str | None = None) -> dict[str, Any]:
         _key = customer_id or global_ingest_key
-        scheduler.stop(_key)
+        if not state.cfg.enable_scheduler:
+            raise_http_error(status_code=409, code="scheduler_disabled")
+        state.scheduler.stop(_key)
         return {"status": "stopped", "key": _key}
+
+    @app.get(
+        "/v1/admin/usage/stats", dependencies=[Depends(require_admin)], responses=ERROR_RESPONSES
+    )
+    def admin_usage_stats() -> dict[str, Any]:
+        return {
+            "queue_depth": int(state.usage_queue.qsize()),
+            "flushed": int(state.usage_stats.flushed),
+            "dropped": int(state.usage_stats.dropped),
+        }
 
     @app.post(
         "/v1/sanctions/screen",
@@ -738,25 +517,28 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
         req: ScreenRequest, principal: ApiPrincipal = Depends(principal_from_request)
     ) -> ScreenResponse:
         if "write:screen" not in principal.scopes:
-            _raise_http_error(status_code=403, code="missing_scope")
-        artifact = ingest_cache.get_or_refresh(
+            raise_http_error(status_code=403, code="missing_scope")
+        artifact = state.ingest_cache.get_or_refresh(
             global_ingest_key,
             lambda: ingest_func(
-                store=store,
-                output_dir=raw_dir / global_ingest_key,
+                store=state.store,
+                output_dir=state.cfg.raw_dir / global_ingest_key,
                 retrieval_ts=req.retrieval_ts,
             ),
         )
         list_version = artifact.list_version
-        sanctions_name_sets = name_sets_cache.get(store, artifact.normalized_name_sets_blob_sha256)
+        sanctions_name_sets = state.name_sets_cache.get(
+            state.store,
+            artifact.normalized_name_sets_blob_sha256,
+        )
         result = screen_subject_name(req.subject.name, sanctions_name_sets)
 
         screen_key = compute_screening_key(
             list_version=list_version,
             subject={"customer_id": principal.customer_id, "subject": req.subject.model_dump()},
         )
-        cached = screen_cache.get(screen_key)
-        if cached is not None and store.has_pack(cached):
+        cached = state.screen_cache.get(screen_key)
+        if cached is not None and state.store.has_pack(cached):
             evidence_pack_id = cached
         else:
             artifact_dict = artifact.to_dict()
@@ -781,8 +563,8 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
                     "canonical_pack_hash": canonical_pack_hash,
                 },
             }
-            evidence_pack_id = store.put_pack(pack).evidence_pack_id
-            screen_cache.set(screen_key, evidence_pack_id)
+            evidence_pack_id = state.store.put_pack(pack).evidence_pack_id
+            state.screen_cache.set(screen_key, evidence_pack_id)
 
         decision: Decision = result.decision
         return ScreenResponse(
@@ -798,21 +580,579 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
         responses=ERROR_RESPONSES,
     )
     def get_evidence_pack(
-        evidence_pack_id: str, principal: ApiPrincipal = Depends(principal_from_request)
+        evidence_pack_id: str, principal=Depends(principal_from_request)
     ) -> EvidencePack:
         if "read:evidence" not in principal.scopes:
-            _raise_http_error(status_code=403, code="missing_scope")
-        if not store.has_pack(evidence_pack_id):
-            _raise_http_error(status_code=404, code="evidence_pack_not_found")
+            raise_http_error(status_code=403, code="missing_scope")
+        if not state.store.has_pack(evidence_pack_id):
+            raise_http_error(status_code=404, code="evidence_pack_not_found")
         try:
-            pack = store.get_pack(evidence_pack_id)
+            pack = state.store.get_pack(evidence_pack_id)
         except ValueError as exc:
             if str(exc) == "evidence_pack_integrity_failed":
-                _raise_http_error(status_code=409, code="evidence_pack_integrity_failed")
+                raise_http_error(status_code=409, code="evidence_pack_integrity_failed")
             raise
         if pack.get("customer_id") != principal.customer_id:
-            _raise_http_error(status_code=404, code="evidence_pack_not_found")
+            raise_http_error(status_code=404, code="evidence_pack_not_found")
         return EvidencePack.model_validate(pack)
+
+    # --- v2 (breaking API) ---
+
+    @app.post("/v2/screenings", response_model=V2CreateScreeningResponse, responses=ERROR_RESPONSES)
+    def v2_create_screening(
+        req: V2CreateScreeningRequest,
+        principal=Depends(principal_from_request),
+    ) -> V2CreateScreeningResponse:
+        if "write:screen" not in principal.scopes:
+            raise_http_error(status_code=403, code="missing_scope")
+        artifact = state.ingest_cache.get_or_refresh(
+            global_ingest_key,
+            lambda: ingest_func(
+                store=state.store,
+                output_dir=state.cfg.raw_dir / global_ingest_key,
+                retrieval_ts=req.retrieval_ts,
+            ),
+        )
+        list_version = artifact.list_version
+        sanctions_name_sets = state.name_sets_cache.get(
+            state.store, artifact.normalized_name_sets_blob_sha256
+        )
+        result = screen_subject_name(req.subject.name, sanctions_name_sets)
+        if demo_mode and req.subject.name.strip().lower() in {"rachel review", "review example"}:
+            # Demo-only: allow showcasing a "review" path deterministically.
+            result = type(result)(
+                decision="review",
+                hits=result.hits,
+                name_norm=result.name_norm,
+                match_type="policy_manual_review",
+                score=50,
+                reason_codes=["policy_manual_review"],
+            )
+
+        screen_key = compute_screening_key(
+            list_version=list_version,
+            subject={"customer_id": principal.customer_id, "subject": req.subject.model_dump()},
+        )
+        cached = state.screen_cache.get(screen_key)
+        if cached is not None and state.store.has_pack(cached):
+            evidence_pack_id = cached
+        else:
+            artifact_dict = artifact.to_dict()
+            result_dict = result.to_dict()
+            canonical_pack_hash = sha256_hex(
+                canonical_json_bytes({"ingestion": artifact_dict, "result": result_dict})
+            )
+            pack = {
+                "schema_version": "2",
+                "created_at": utc_now_iso(),
+                "customer_id": principal.customer_id,
+                "list_version": list_version,
+                "screen_key": screen_key,
+                "ingestion": artifact_dict,
+                "input": {
+                    "subject": req.subject.model_dump(),
+                    "screening_type": req.screening_type,
+                },
+                "result": result_dict,
+                "determinism": {"canonical_pack_hash": canonical_pack_hash},
+            }
+            evidence_pack_id = state.store.put_pack(pack).evidence_pack_id
+            state.screen_cache.set(screen_key, evidence_pack_id)
+
+        state.db.insert_screening(
+            screening_id=screen_key,
+            created_at=utc_now_iso(),
+            customer_id=principal.customer_id,
+            evidence_pack_id=evidence_pack_id,
+            list_version=list_version,
+        )
+        created_at = utc_now_iso()
+        status = "needs_review" if result.decision in {"review", "block"} else "closed"
+        state.db.upsert_case(
+            case_id=screen_key,
+            created_at=created_at,
+            updated_at=created_at,
+            customer_id=principal.customer_id,
+            screening_id=screen_key,
+            evidence_pack_id=evidence_pack_id,
+            status=status,
+        )
+        state.db.insert_case_event(
+            case_id=screen_key,
+            ts=created_at,
+            actor="system",
+            event_type="screening_created",
+            note=f"decision={result.decision}",
+        )
+        _emit_webhooks(
+            customer_id=principal.customer_id,
+            event_type="screening.created",
+            event_id=screen_key,
+            data={
+                "screening_id": screen_key,
+                "decision": result.decision,
+                "evidence_pack_id": evidence_pack_id,
+                "list_version": list_version,
+            },
+        )
+
+        return V2CreateScreeningResponse(
+            screening_id=screen_key,
+            decision=result.decision,
+            hits=list(result.hits),
+            match_type=result.match_type,
+            score=int(result.score),
+            reason_codes=list(result.reason_codes),
+            list_version=list_version,
+            evidence_pack_id=evidence_pack_id,
+        )
+
+    @app.post(
+        "/v2/screenings/{screening_id}/decision",
+        response_model=V2ReviewDecisionResponse,
+        responses=ERROR_RESPONSES,
+    )
+    def v2_set_review_decision(
+        screening_id: str,
+        req: V2ReviewDecisionRequest,
+        request: Request,
+        principal=Depends(principal_from_request),
+    ) -> V2ReviewDecisionResponse:
+        if "write:screen" not in principal.scopes:
+            raise_http_error(status_code=403, code="missing_scope")
+        screening = state.db.get_screening(screening_id)
+        if screening is None or screening["customer_id"] != principal.customer_id:
+            raise_http_error(status_code=404, code="screening_not_found")
+        decided_at = utc_now_iso()
+        state.db.upsert_screening_review_decision(
+            screening_id=screening_id,
+            decided_at=decided_at,
+            customer_id=principal.customer_id,
+            evidence_pack_id=screening["evidence_pack_id"],
+            outcome=req.outcome,
+            note=req.note,
+        )
+        state.db.insert_audit_event(
+            ts=decided_at,
+            actor="customer",
+            action="screening_review_decision",
+            request_id=getattr(request.state, "request_id", None),
+            details_json=json.dumps(
+                {
+                    "customer_id": principal.customer_id,
+                    "screening_id": screening_id,
+                    "evidence_pack_id": screening["evidence_pack_id"],
+                    "outcome": req.outcome,
+                }
+            ),
+        )
+        state.db.upsert_case(
+            case_id=screening_id,
+            created_at=screening["created_at"],
+            updated_at=decided_at,
+            customer_id=principal.customer_id,
+            screening_id=screening_id,
+            evidence_pack_id=screening["evidence_pack_id"],
+            status="closed",
+        )
+        state.db.insert_case_event(
+            case_id=screening_id,
+            ts=decided_at,
+            actor="customer",
+            event_type="review_decision_recorded",
+            note=f"outcome={req.outcome}",
+        )
+
+        _emit_webhooks(
+            customer_id=principal.customer_id,
+            event_type="screening.review_decision_recorded",
+            event_id=screening_id,
+            data={
+                "screening_id": screening_id,
+                "evidence_pack_id": screening["evidence_pack_id"],
+                "outcome": req.outcome,
+                "decided_at": decided_at,
+            },
+        )
+        return V2ReviewDecisionResponse(
+            screening_id=screening_id,
+            decided_at=decided_at,
+            outcome=req.outcome,
+            note=req.note,
+        )
+
+    @app.post(
+        "/v2/webhooks/subscriptions",
+        response_model=V2WebhookSubscription,
+        responses=ERROR_RESPONSES,
+    )
+    def v2_create_webhook_subscription(
+        req: V2CreateWebhookSubscriptionRequest,
+        principal=Depends(principal_from_request),
+    ) -> V2WebhookSubscription:
+        if "write:screen" not in principal.scopes:
+            raise_http_error(status_code=403, code="missing_scope")
+        sub_id = sha256_hex(
+            canonical_json_bytes(
+                {"customer_id": principal.customer_id, "url": req.url, "created_at": utc_now_iso()}
+            )
+        )[:32]
+        now = utc_now_iso()
+        state.db.create_webhook_subscription(
+            subscription_id=sub_id,
+            customer_id=principal.customer_id,
+            url=req.url,
+            secret=req.secret,
+            events=req.events,
+            created_at=now,
+            active=True,
+        )
+        return V2WebhookSubscription(
+            subscription_id=sub_id, url=req.url, events=req.events, active=True, created_at=now
+        )
+
+    @app.get(
+        "/v2/webhooks/subscriptions",
+        response_model=list[V2WebhookSubscription],
+        responses=ERROR_RESPONSES,
+    )
+    def v2_list_webhook_subscriptions(
+        principal=Depends(principal_from_request),
+    ) -> list[V2WebhookSubscription]:
+        rows = state.db.list_webhook_subscriptions(customer_id=principal.customer_id)
+        return [
+            V2WebhookSubscription(
+                subscription_id=str(r["subscription_id"]),
+                url=str(r["url"]),
+                events=list(r.get("events") or []),
+                active=bool(r.get("active")),
+                created_at=str(r["created_at"]),
+            )
+            for r in rows
+        ]
+
+    @app.delete(
+        "/v2/webhooks/subscriptions/{subscription_id}",
+        responses=ERROR_RESPONSES,
+    )
+    def v2_delete_webhook_subscription(
+        subscription_id: str,
+        principal=Depends(principal_from_request),
+    ) -> dict[str, str]:
+        ok = state.db.delete_webhook_subscription(
+            subscription_id=subscription_id, customer_id=principal.customer_id
+        )
+        if not ok:
+            raise_http_error(status_code=404, code="subscription_not_found")
+        return {"status": "deleted"}
+
+    def _hash_hex(obj: Any) -> str:
+        return sha256_hex(canonical_json_bytes(obj))
+
+    def _build_case_event_chain(
+        *, events: list[dict[str, Any]]
+    ) -> tuple[list[V2ChainedCaseEvent], str]:
+        prev = "0" * 64
+        chained: list[V2ChainedCaseEvent] = []
+        for ev in events:
+            ev_payload = {
+                "ts": ev.get("ts"),
+                "actor": ev.get("actor"),
+                "event_type": ev.get("event_type"),
+                "note": ev.get("note"),
+            }
+            h = _hash_hex({"prev_hash": prev, "event": ev_payload})
+            chained.append(
+                V2ChainedCaseEvent(
+                    ts=str(ev_payload.get("ts") or ""),
+                    actor=str(ev_payload.get("actor") or ""),
+                    event_type=str(ev_payload.get("event_type") or ""),
+                    note=str(ev_payload.get("note"))
+                    if ev_payload.get("note") is not None
+                    else None,
+                    prev_hash=prev,
+                    hash=h,
+                )
+            )
+            prev = h
+        return chained, prev
+
+    @app.get(
+        "/v2/cases/{case_id}/bundle",
+        response_model=V2CaseEvidenceBundleResponse,
+        responses=ERROR_RESPONSES,
+    )
+    def v2_get_case_bundle(
+        case_id: str,
+        principal=Depends(principal_from_request),
+    ) -> V2CaseEvidenceBundleResponse:
+        if "read:evidence" not in principal.scopes:
+            raise_http_error(status_code=403, code="missing_scope")
+        c = state.db.get_case(case_id=case_id)
+        if c is None or c["customer_id"] != principal.customer_id:
+            raise_http_error(status_code=404, code="case_not_found")
+
+        pack = get_evidence_pack(c["evidence_pack_id"], principal).model_dump()
+        events = state.db.list_case_events(case_id=case_id, limit=500)
+        chained, head = _build_case_event_chain(events=events)
+
+        bundle = V2CaseEvidenceBundle(
+            case_id=case_id,
+            customer_id=principal.customer_id,
+            created_at=utc_now_iso(),
+            evidence_pack=pack,
+            case=c,
+            events=chained,
+            chain_head=head,
+        )
+
+        key_id = state.cfg.signing_key_current
+        if not key_id or key_id not in state.cfg.signing_keys:
+            raise_http_error(status_code=503, code="signing_not_configured")
+        secret = state.cfg.signing_keys[key_id]
+        payload = canonical_json_bytes(bundle.model_dump())
+        sig = sign_bytes(secret, payload)
+        return V2CaseEvidenceBundleResponse(
+            bundle=bundle,
+            signature=V2CaseEvidenceBundleSignature(key_id=key_id, signature=sig),
+        )
+
+    @app.post(
+        "/v2/cases/bundles/verify",
+        response_model=V2VerifyCaseEvidenceBundleResponse,
+        responses=ERROR_RESPONSES,
+    )
+    def v2_verify_case_bundle(
+        req: V2VerifyCaseEvidenceBundleRequest,
+        principal=Depends(principal_from_request),
+    ) -> V2VerifyCaseEvidenceBundleResponse:
+        if "read:evidence" not in principal.scopes:
+            raise_http_error(status_code=403, code="missing_scope")
+        secret = state.cfg.signing_keys.get(req.key_id)
+        if secret is None:
+            raise_http_error(status_code=404, code="signing_key_not_found")
+        payload = canonical_json_bytes(req.bundle)
+        return V2VerifyCaseEvidenceBundleResponse(
+            valid=verify_bytes(secret, payload, req.signature)
+        )
+
+    @app.get("/v2/cases", response_model=list[V2CaseSummary], responses=ERROR_RESPONSES)
+    def v2_list_cases(
+        status: str | None = None,
+        assignee: str | None = None,
+        limit: int = 50,
+        principal=Depends(principal_from_request),
+    ) -> list[V2CaseSummary]:
+        if "read:evidence" not in principal.scopes:
+            raise_http_error(status_code=403, code="missing_scope")
+        rows = state.db.list_cases(
+            customer_id=principal.customer_id, status=status, assignee=assignee, limit=limit
+        )
+        out: list[V2CaseSummary] = []
+        for r in rows:
+            subject_name: str | None = None
+            decision: str | None = None
+            try:
+                pack = state.store.get_pack(r["evidence_pack_id"])
+                subj = (
+                    (pack.get("input") or {}).get("subject")
+                    if isinstance(pack.get("input"), dict)
+                    else None
+                )
+                if isinstance(subj, dict):
+                    subject_name = str(subj.get("name") or "") or None
+                res = pack.get("result") if isinstance(pack.get("result"), dict) else None
+                if isinstance(res, dict) and res.get("decision"):
+                    decision = str(res.get("decision"))
+            except Exception:
+                pass
+            out.append(
+                V2CaseSummary(
+                    case_id=r["case_id"],
+                    created_at=r["created_at"],
+                    updated_at=r["updated_at"],
+                    status=r["status"],
+                    assignee=r.get("assignee") or None,
+                    screening_id=r["screening_id"],
+                    evidence_pack_id=r["evidence_pack_id"],
+                    subject_name=subject_name,
+                    decision=decision,  # type: ignore[arg-type]
+                )
+            )
+        return out
+
+    @app.get("/v2/cases/{case_id}", response_model=V2CaseDetail, responses=ERROR_RESPONSES)
+    def v2_get_case(
+        case_id: str,
+        principal=Depends(principal_from_request),
+    ) -> V2CaseDetail:
+        if "read:evidence" not in principal.scopes:
+            raise_http_error(status_code=403, code="missing_scope")
+        c = state.db.get_case(case_id=case_id)
+        if c is None or c["customer_id"] != principal.customer_id:
+            raise_http_error(status_code=404, code="case_not_found")
+        events = state.db.list_case_events(case_id=case_id)
+        subject_name: str | None = None
+        decision: str | None = None
+        try:
+            pack = state.store.get_pack(c["evidence_pack_id"])
+            subj = (
+                (pack.get("input") or {}).get("subject")
+                if isinstance(pack.get("input"), dict)
+                else None
+            )
+            if isinstance(subj, dict):
+                subject_name = str(subj.get("name") or "") or None
+            res = pack.get("result") if isinstance(pack.get("result"), dict) else None
+            if isinstance(res, dict) and res.get("decision"):
+                decision = str(res.get("decision"))
+        except Exception:
+            pass
+        summary = V2CaseSummary(
+            case_id=c["case_id"],
+            created_at=c["created_at"],
+            updated_at=c["updated_at"],
+            status=c["status"],
+            assignee=c.get("assignee") or None,
+            screening_id=c["screening_id"],
+            evidence_pack_id=c["evidence_pack_id"],
+            subject_name=subject_name,
+            decision=decision,  # type: ignore[arg-type]
+        )
+        return V2CaseDetail(
+            case=summary,
+            events=[
+                V2CaseEvent(
+                    ts=e["ts"],
+                    actor=e["actor"],
+                    event_type=e["event_type"],
+                    note=e["note"] or None,
+                )
+                for e in events
+            ],
+        )
+
+    @app.post("/v2/cases/{case_id}/events", response_model=V2CaseDetail, responses=ERROR_RESPONSES)
+    def v2_add_case_event(
+        case_id: str,
+        req: V2CreateCaseEventRequest,
+        request: Request,
+        principal=Depends(principal_from_request),
+    ) -> V2CaseDetail:
+        if "write:screen" not in principal.scopes:
+            raise_http_error(status_code=403, code="missing_scope")
+        c = state.db.get_case(case_id=case_id)
+        if c is None or c["customer_id"] != principal.customer_id:
+            raise_http_error(status_code=404, code="case_not_found")
+
+        ts = utc_now_iso()
+        note = req.note
+        if req.event_type == "assign" and req.assignee:
+            note = f"assignee={req.assignee}" + (f" {note}" if note else "")
+        if req.event_type == "status_update" and req.status:
+            note = f"status={req.status}" + (f" {note}" if note else "")
+
+        state.db.insert_case_event(
+            case_id=case_id,
+            ts=ts,
+            actor="customer",
+            event_type=req.event_type,
+            note=note,
+        )
+        if req.event_type == "status_update" and req.status:
+            state.db.upsert_case(
+                case_id=case_id,
+                created_at=c["created_at"],
+                updated_at=ts,
+                customer_id=principal.customer_id,
+                screening_id=c["screening_id"],
+                evidence_pack_id=c["evidence_pack_id"],
+                status=req.status,
+            )
+        if req.event_type == "assign" and req.assignee:
+            state.db.upsert_case(
+                case_id=case_id,
+                created_at=c["created_at"],
+                updated_at=ts,
+                customer_id=principal.customer_id,
+                screening_id=c["screening_id"],
+                evidence_pack_id=c["evidence_pack_id"],
+                status=c["status"],
+                assignee=req.assignee,
+            )
+
+        state.db.insert_audit_event(
+            ts=ts,
+            actor="customer",
+            action="case_event",
+            request_id=getattr(request.state, "request_id", None),
+            details_json=json.dumps(
+                {
+                    "customer_id": principal.customer_id,
+                    "case_id": case_id,
+                    "event_type": req.event_type,
+                }
+            ),
+        )
+        return v2_get_case(case_id, principal)
+
+    @app.get(
+        "/v2/evidence-packs/{evidence_pack_id}",
+        response_model=EvidencePack,
+        responses=ERROR_RESPONSES,
+    )
+    def v2_get_evidence_pack(
+        evidence_pack_id: str,
+        principal=Depends(principal_from_request),
+    ) -> EvidencePack:
+        return get_evidence_pack(evidence_pack_id, principal)
+
+    @app.get("/v2/evidence-packs/{evidence_pack_id}/export", responses=ERROR_RESPONSES)
+    def v2_export(
+        evidence_pack_id: str,
+        request: Request,
+        format: str = "pdf",  # noqa: A002
+        principal=Depends(principal_from_request),
+    ) -> Response:
+        if format not in ("pdf", "json"):
+            raise_http_error(
+                status_code=422, code="validation_error", details={"format": "pdf|json"}
+            )
+        if format == "json":
+            base = get_evidence_pack(evidence_pack_id, principal).model_dump()
+            review = state.db.get_screening_review_decision_by_evidence_pack(
+                customer_id=principal.customer_id,
+                evidence_pack_id=evidence_pack_id,
+            )
+            if review is not None:
+                base["review_decision"] = review
+            case_id = str(base.get("screen_key") or "")
+            if case_id:
+                base["case_timeline"] = state.db.list_case_events(case_id=case_id)
+            return Response(content=canonical_json_bytes(base), media_type="application/json")
+
+        # PDF export: always render a "view" that includes review + case timeline when present.
+        pack = get_evidence_pack(evidence_pack_id, principal).model_dump()
+        review = state.db.get_screening_review_decision_by_evidence_pack(
+            customer_id=principal.customer_id,
+            evidence_pack_id=evidence_pack_id,
+        )
+        if review is not None:
+            pack["review_decision"] = review
+        case_id = str(pack.get("screen_key") or "")
+        if case_id:
+            pack["case_timeline"] = state.db.list_case_events(case_id=case_id)
+
+        request_id = getattr(request.state, "request_id", None)
+        pdf_bytes = render_evidence_pack_pdf(
+            pack=pack,
+            evidence_pack_id=evidence_pack_id,
+            request_id=request_id,
+        )
+        headers = {
+            "content-disposition": f'attachment; filename="evidence-pack-{evidence_pack_id}.pdf"',
+        }
+        return Response(content=pdf_bytes, media_type="application/pdf", headers=headers)
 
     return app
 

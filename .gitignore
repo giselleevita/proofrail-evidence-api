@@ -11,3 +11,4 @@ proofrail_store/
 
 output/
 tmp/
+.firecrawl/

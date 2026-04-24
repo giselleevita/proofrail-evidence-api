@@ -10,12 +10,27 @@ from ProofRail.service.app import create_app
 
 def main() -> int:
     client = TestClient(create_app())
-    schema = client.get("/openapi.json").json()
-    schema.pop("servers", None)
+    full = client.get("/openapi.json").json()
+    full.pop("servers", None)
 
-    out = Path(__file__).resolve().parent.parent / "tests" / "openapi.snapshot.json"
-    out.write_text(json.dumps(schema, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(f"wrote {out}")
+    def filtered(prefix: str) -> dict[str, object]:
+        schema = dict(full)
+        paths = dict(schema.get("paths") or {})
+        schema["paths"] = {
+            p: v for p, v in paths.items() if p.startswith(prefix) or p in ("/healthz", "/readyz")
+        }
+        return schema
+
+    out_v1 = Path(__file__).resolve().parent.parent / "tests" / "openapi.v1.snapshot.json"
+    out_v2 = Path(__file__).resolve().parent.parent / "tests" / "openapi.v2.snapshot.json"
+    out_v1.write_text(
+        json.dumps(filtered("/v1/"), indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    out_v2.write_text(
+        json.dumps(filtered("/v2/"), indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    print(f"wrote {out_v1}")
+    print(f"wrote {out_v2}")
     return 0
 
 
