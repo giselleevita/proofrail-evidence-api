@@ -29,6 +29,9 @@ class TestPdfExport(unittest.TestCase):
 
         self.client = TestClient(create_app(ingest_func=fake_ingest))
 
+    def tearDown(self) -> None:
+        self.client.close()
+
     def _create_key(self, customer_id: str, scopes: list[str]) -> str:
         resp = self.client.post(
             "/v1/admin/keys",

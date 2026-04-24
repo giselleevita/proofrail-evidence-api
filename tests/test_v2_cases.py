@@ -29,6 +29,9 @@ class TestV2Cases(unittest.TestCase):
 
         self.client = TestClient(create_app(ingest_func=fake_ingest))
 
+    def tearDown(self) -> None:
+        self.client.close()
+
     def test_case_events_endpoint(self) -> None:
         r = self.client.post(
             "/v1/admin/keys",
@@ -67,3 +70,4 @@ class TestV2Cases(unittest.TestCase):
         )
         self.assertEqual(q.status_code, 200)
         self.assertTrue(any(item["case_id"] == case_id for item in q.json()))
+
