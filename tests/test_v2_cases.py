@@ -33,7 +33,7 @@ class TestV2Cases(unittest.TestCase):
         r = self.client.post(
             "/v1/admin/keys",
             headers={"x-admin-key": "dev-admin"},
-            json={"customer_id": "c1", "scopes": ["write:screen", "read:evidence"]},
+            json={"customer_id": "c1", "scopes": ["write:screen", "read:evidence", "write:cases"]},
         )
         api_key = r.json()["api_key"]
 

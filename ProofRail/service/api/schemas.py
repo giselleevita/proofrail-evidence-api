@@ -41,6 +41,8 @@ class CreateKeyRequest(BaseModel):
     @classmethod
     def _normalize_scopes(cls, v: Any) -> list[str]:
         if v is None:
+            # Default for integration keys: screening + evidence access.
+            # Analyst/case keys should include "write:cases" explicitly.
             return ["write:screen", "read:evidence"]
         if isinstance(v, str):
             return [s.strip() for s in v.split(",") if s.strip()]

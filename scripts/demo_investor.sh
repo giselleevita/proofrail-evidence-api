@@ -27,7 +27,7 @@ API_KEY="$(
   curl -sS -X POST "${BASE_URL}/v1/admin/keys" \
     -H "content-type: application/json" \
     -H "x-admin-key: ${ADMIN_KEY}" \
-    -d "{\"customer_id\":\"${CUSTOMER_ID}\",\"scopes\":[\"write:screen\",\"read:evidence\"]}" \
+    -d "{\"customer_id\":\"${CUSTOMER_ID}\",\"scopes\":[\"write:screen\",\"read:evidence\",\"write:cases\"]}" \
   | python3 -c 'import sys,json; print(json.load(sys.stdin)["api_key"])'
 )"
 
