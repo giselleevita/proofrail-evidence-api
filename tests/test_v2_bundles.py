@@ -80,4 +80,3 @@ class TestV2Bundles(unittest.TestCase):
         )
         self.assertEqual(v.status_code, 200)
         self.assertTrue(v.json()["valid"])
-
