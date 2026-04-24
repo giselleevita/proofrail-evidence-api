@@ -2,7 +2,11 @@ services:
   proofrail:
     build: .
     environment:
-      PROOFRAIL_ADMIN_KEY: "change-me"
+      PROOFRAIL_ADMIN_KEY: ${PROOFRAIL_ADMIN_KEY:-change-me}
+      PROOFRAIL_SIGNING_SECRET: ${PROOFRAIL_SIGNING_SECRET:-}
+      PROOFRAIL_SIGNING_KEYS: ${PROOFRAIL_SIGNING_KEYS:-}
+      PROOFRAIL_SIGNING_KEY_CURRENT: ${PROOFRAIL_SIGNING_KEY_CURRENT:-}
+      PROOFRAIL_DEMO_MODE: ${PROOFRAIL_DEMO_MODE:-0}
       PROOFRAIL_STORE_DIR: "/data/proofrail_store"
       PROOFRAIL_DB_PATH: "/data/proofrail_store/proofrail.sqlite3"
       PROOFRAIL_RPM: "120"

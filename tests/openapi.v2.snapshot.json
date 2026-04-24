@@ -337,6 +337,662 @@
         "title": "Subject",
         "type": "object"
       },
+      "V1AdminRunWebhookDeliveriesResponse": {
+        "properties": {
+          "attempted": {
+            "title": "Attempted",
+            "type": "integer"
+          },
+          "delivered": {
+            "title": "Delivered",
+            "type": "integer"
+          },
+          "failed": {
+            "title": "Failed",
+            "type": "integer"
+          },
+          "retried": {
+            "title": "Retried",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "attempted",
+          "delivered",
+          "retried",
+          "failed"
+        ],
+        "title": "V1AdminRunWebhookDeliveriesResponse",
+        "type": "object"
+      },
+      "V2CaseDetail": {
+        "properties": {
+          "case": {
+            "$ref": "#/components/schemas/V2CaseSummary"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/V2CaseEvent"
+            },
+            "title": "Events",
+            "type": "array"
+          }
+        },
+        "required": [
+          "case",
+          "events"
+        ],
+        "title": "V2CaseDetail",
+        "type": "object"
+      },
+      "V2CaseEvent": {
+        "properties": {
+          "actor": {
+            "title": "Actor",
+            "type": "string"
+          },
+          "event_type": {
+            "title": "Event Type",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "ts": {
+            "title": "Ts",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ts",
+          "actor",
+          "event_type"
+        ],
+        "title": "V2CaseEvent",
+        "type": "object"
+      },
+      "V2CaseEvidenceBundle": {
+        "properties": {
+          "case": {
+            "additionalProperties": true,
+            "title": "Case",
+            "type": "object"
+          },
+          "case_id": {
+            "title": "Case Id",
+            "type": "string"
+          },
+          "chain_head": {
+            "title": "Chain Head",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "customer_id": {
+            "title": "Customer Id",
+            "type": "string"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/V2ChainedCaseEvent"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "evidence_pack": {
+            "additionalProperties": true,
+            "title": "Evidence Pack",
+            "type": "object"
+          },
+          "schema_version": {
+            "default": "1",
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "case_id",
+          "customer_id",
+          "created_at",
+          "evidence_pack",
+          "case",
+          "events",
+          "chain_head"
+        ],
+        "title": "V2CaseEvidenceBundle",
+        "type": "object"
+      },
+      "V2CaseEvidenceBundleResponse": {
+        "properties": {
+          "bundle": {
+            "$ref": "#/components/schemas/V2CaseEvidenceBundle"
+          },
+          "signature": {
+            "$ref": "#/components/schemas/V2CaseEvidenceBundleSignature"
+          }
+        },
+        "required": [
+          "bundle",
+          "signature"
+        ],
+        "title": "V2CaseEvidenceBundleResponse",
+        "type": "object"
+      },
+      "V2CaseEvidenceBundleSignature": {
+        "properties": {
+          "key_id": {
+            "title": "Key Id",
+            "type": "string"
+          },
+          "signature": {
+            "title": "Signature",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key_id",
+          "signature"
+        ],
+        "title": "V2CaseEvidenceBundleSignature",
+        "type": "object"
+      },
+      "V2CaseSummary": {
+        "properties": {
+          "assignee": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee"
+          },
+          "case_id": {
+            "title": "Case Id",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "decision": {
+            "anyOf": [
+              {
+                "enum": [
+                  "allow",
+                  "block",
+                  "review"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision"
+          },
+          "evidence_pack_id": {
+            "title": "Evidence Pack Id",
+            "type": "string"
+          },
+          "screening_id": {
+            "title": "Screening Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "subject_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Name"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "case_id",
+          "created_at",
+          "updated_at",
+          "status",
+          "screening_id",
+          "evidence_pack_id"
+        ],
+        "title": "V2CaseSummary",
+        "type": "object"
+      },
+      "V2ChainedCaseEvent": {
+        "properties": {
+          "actor": {
+            "title": "Actor",
+            "type": "string"
+          },
+          "event_type": {
+            "title": "Event Type",
+            "type": "string"
+          },
+          "hash": {
+            "title": "Hash",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "prev_hash": {
+            "title": "Prev Hash",
+            "type": "string"
+          },
+          "ts": {
+            "title": "Ts",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ts",
+          "actor",
+          "event_type",
+          "prev_hash",
+          "hash"
+        ],
+        "title": "V2ChainedCaseEvent",
+        "type": "object"
+      },
+      "V2CreateCaseEventRequest": {
+        "properties": {
+          "assignee": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee"
+          },
+          "event_type": {
+            "enum": [
+              "comment",
+              "status_update",
+              "assign"
+            ],
+            "title": "Event Type",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "needs_review",
+                  "closed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "required": [
+          "event_type"
+        ],
+        "title": "V2CreateCaseEventRequest",
+        "type": "object"
+      },
+      "V2CreateScreeningRequest": {
+        "properties": {
+          "retrieval_ts": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retrieval Ts"
+          },
+          "screening_type": {
+            "const": "onboarding",
+            "default": "onboarding",
+            "title": "Screening Type",
+            "type": "string"
+          },
+          "subject": {
+            "$ref": "#/components/schemas/V2ScreeningSubject"
+          }
+        },
+        "required": [
+          "subject"
+        ],
+        "title": "V2CreateScreeningRequest",
+        "type": "object"
+      },
+      "V2CreateScreeningResponse": {
+        "properties": {
+          "decision": {
+            "enum": [
+              "allow",
+              "block",
+              "review"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "evidence_pack_id": {
+            "title": "Evidence Pack Id",
+            "type": "string"
+          },
+          "hits": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Hits",
+            "type": "array"
+          },
+          "list_version": {
+            "title": "List Version",
+            "type": "string"
+          },
+          "match_type": {
+            "title": "Match Type",
+            "type": "string"
+          },
+          "reason_codes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reason Codes",
+            "type": "array"
+          },
+          "score": {
+            "title": "Score",
+            "type": "integer"
+          },
+          "screening_id": {
+            "title": "Screening Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "screening_id",
+          "decision",
+          "hits",
+          "match_type",
+          "score",
+          "reason_codes",
+          "list_version",
+          "evidence_pack_id"
+        ],
+        "title": "V2CreateScreeningResponse",
+        "type": "object"
+      },
+      "V2CreateWebhookSubscriptionRequest": {
+        "properties": {
+          "events": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Events",
+            "type": "array"
+          },
+          "secret": {
+            "maxLength": 256,
+            "minLength": 8,
+            "title": "Secret",
+            "type": "string"
+          },
+          "url": {
+            "maxLength": 2048,
+            "minLength": 8,
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "secret",
+          "events"
+        ],
+        "title": "V2CreateWebhookSubscriptionRequest",
+        "type": "object"
+      },
+      "V2ReviewDecisionRequest": {
+        "properties": {
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "outcome": {
+            "enum": [
+              "approve",
+              "reject"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          }
+        },
+        "required": [
+          "outcome"
+        ],
+        "title": "V2ReviewDecisionRequest",
+        "type": "object"
+      },
+      "V2ReviewDecisionResponse": {
+        "properties": {
+          "decided_at": {
+            "title": "Decided At",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "outcome": {
+            "enum": [
+              "approve",
+              "reject"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "screening_id": {
+            "title": "Screening Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "screening_id",
+          "decided_at",
+          "outcome"
+        ],
+        "title": "V2ReviewDecisionResponse",
+        "type": "object"
+      },
+      "V2ScreeningSubject": {
+        "properties": {
+          "country": {
+            "anyOf": [
+              {
+                "maxLength": 2,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Country"
+          },
+          "dob": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dob"
+          },
+          "external_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Id"
+          },
+          "name": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "V2ScreeningSubject",
+        "type": "object"
+      },
+      "V2VerifyCaseEvidenceBundleRequest": {
+        "properties": {
+          "bundle": {
+            "additionalProperties": true,
+            "title": "Bundle",
+            "type": "object"
+          },
+          "key_id": {
+            "title": "Key Id",
+            "type": "string"
+          },
+          "signature": {
+            "title": "Signature",
+            "type": "string"
+          }
+        },
+        "required": [
+          "bundle",
+          "key_id",
+          "signature"
+        ],
+        "title": "V2VerifyCaseEvidenceBundleRequest",
+        "type": "object"
+      },
+      "V2VerifyCaseEvidenceBundleResponse": {
+        "properties": {
+          "valid": {
+            "title": "Valid",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "valid"
+        ],
+        "title": "V2VerifyCaseEvidenceBundleResponse",
+        "type": "object"
+      },
+      "V2WebhookSubscription": {
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "events": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "subscription_id": {
+            "title": "Subscription Id",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subscription_id",
+          "url",
+          "events",
+          "active",
+          "created_at"
+        ],
+        "title": "V2WebhookSubscription",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -531,13 +1187,13 @@
         "summary": "Readyz"
       }
     },
-    "/v1/admin/gc/run": {
-      "post": {
-        "operationId": "admin_gc_run_v1_admin_gc_run_post",
+    "/v2/cases": {
+      "get": {
+        "operationId": "v2_list_cases_v2_cases_get",
         "parameters": [
           {
             "in": "query",
-            "name": "customer_id",
+            "name": "status",
             "required": false,
             "schema": {
               "anyOf": [
@@ -548,54 +1204,12 @@
                   "type": "null"
                 }
               ],
-              "title": "Customer Id"
+              "title": "Status"
             }
           },
           {
             "in": "query",
-            "name": "dry_run",
-            "required": false,
-            "schema": {
-              "default": true,
-              "title": "Dry Run",
-              "type": "boolean"
-            }
-          },
-          {
-            "in": "query",
-            "name": "usage_retention_days",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Usage Retention Days"
-            }
-          },
-          {
-            "in": "query",
-            "name": "evidence_retention_days",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Evidence Retention Days"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-admin-key",
+            "name": "assignee",
             "required": false,
             "schema": {
               "anyOf": [
@@ -606,223 +1220,18 @@
                   "type": "null"
                 }
               ],
-              "title": "X-Admin-Key"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Admin Gc Run V1 Admin Gc Run Post",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unauthorized"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Forbidden"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Not Found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Conflict"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unprocessable Content"
-          },
-          "429": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Too Many Requests"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Internal Server Error"
-          }
-        },
-        "summary": "Admin Gc Run"
-      }
-    },
-    "/v1/admin/ingest/refresh": {
-      "post": {
-        "description": "Trigger an ingestion refresh in the background.",
-        "operationId": "refresh_ingest_v1_admin_ingest_refresh_post",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "customer_id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Customer Id"
+              "title": "Assignee"
             }
           },
           {
             "in": "query",
-            "name": "retrieval_ts",
+            "name": "limit",
             "required": false,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Retrieval Ts"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-admin-key",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Admin-Key"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Refresh Ingest V1 Admin Ingest Refresh Post",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Refresh Ingest"
-      }
-    },
-    "/v1/admin/ingest/schedule": {
-      "post": {
-        "operationId": "schedule_refresh_v1_admin_ingest_schedule_post",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "customer_id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Customer Id"
-            }
-          },
-          {
-            "in": "query",
-            "name": "interval_seconds",
-            "required": false,
-            "schema": {
-              "default": 3600,
-              "title": "Interval Seconds",
+              "default": 50,
+              "title": "Limit",
               "type": "integer"
             }
-          },
-          {
-            "in": "header",
-            "name": "x-admin-key",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Admin-Key"
-            }
           }
         ],
         "responses": {
@@ -830,249 +1239,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Schedule Refresh V1 Admin Ingest Schedule Post",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Schedule Refresh"
-      }
-    },
-    "/v1/admin/ingest/schedule/stop": {
-      "post": {
-        "operationId": "stop_schedule_v1_admin_ingest_schedule_stop_post",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "customer_id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Customer Id"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-admin-key",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Admin-Key"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Stop Schedule V1 Admin Ingest Schedule Stop Post",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Stop Schedule"
-      }
-    },
-    "/v1/admin/keys": {
-      "post": {
-        "operationId": "admin_create_key_v1_admin_keys_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "x-admin-key",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Admin-Key"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateKeyRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CreateKeyResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unauthorized"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Forbidden"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Not Found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Conflict"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unprocessable Content"
-          },
-          "429": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Too Many Requests"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Internal Server Error"
-          }
-        },
-        "summary": "Admin Create Key"
-      }
-    },
-    "/v1/admin/keys/revoke": {
-      "post": {
-        "operationId": "admin_revoke_key_v1_admin_keys_revoke_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "x-admin-key",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Admin-Key"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RevokeKeyRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": {
-                    "type": "string"
+                  "items": {
+                    "$ref": "#/components/schemas/V2CaseSummary"
                   },
-                  "title": "Response Admin Revoke Key V1 Admin Keys Revoke Post",
-                  "type": "object"
+                  "title": "Response V2 List Cases V2 Cases Get",
+                  "type": "array"
                 }
               }
             },
@@ -1149,27 +1320,316 @@
             "description": "Internal Server Error"
           }
         },
-        "summary": "Admin Revoke Key"
+        "summary": "V2 List Cases"
       }
     },
-    "/v1/admin/keys/rotate": {
+    "/v2/cases/bundles/verify": {
       "post": {
-        "operationId": "admin_rotate_key_v1_admin_keys_rotate_post",
+        "operationId": "v2_verify_case_bundle_v2_cases_bundles_verify_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/V2VerifyCaseEvidenceBundleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2VerifyCaseEvidenceBundleResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "V2 Verify Case Bundle"
+      }
+    },
+    "/v2/cases/{case_id}": {
+      "get": {
+        "operationId": "v2_get_case_v2_cases__case_id__get",
         "parameters": [
           {
-            "in": "header",
-            "name": "x-admin-key",
-            "required": false,
+            "in": "path",
+            "name": "case_id",
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
+              "title": "Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2CaseDetail"
                 }
-              ],
-              "title": "X-Admin-Key"
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "V2 Get Case"
+      }
+    },
+    "/v2/cases/{case_id}/bundle": {
+      "get": {
+        "operationId": "v2_get_case_bundle_v2_cases__case_id__bundle_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "title": "Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2CaseEvidenceBundleResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "V2 Get Case Bundle"
+      }
+    },
+    "/v2/cases/{case_id}/events": {
+      "post": {
+        "operationId": "v2_add_case_event_v2_cases__case_id__events_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "title": "Case Id",
+              "type": "string"
             }
           }
         ],
@@ -1177,7 +1637,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/RotateKeyRequest"
+                "$ref": "#/components/schemas/V2CreateCaseEventRequest"
               }
             }
           },
@@ -1188,7 +1648,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CreateKeyResponse"
+                  "$ref": "#/components/schemas/V2CaseDetail"
                 }
               }
             },
@@ -1265,110 +1725,12 @@
             "description": "Internal Server Error"
           }
         },
-        "summary": "Admin Rotate Key"
+        "summary": "V2 Add Case Event"
       }
     },
-    "/v1/evidence-packs/verify": {
-      "post": {
-        "operationId": "verify_evidence_pack_v1_evidence_packs_verify_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/VerifyEvidencePackRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/VerifyEvidencePackResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unauthorized"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Forbidden"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Not Found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Conflict"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unprocessable Content"
-          },
-          "429": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Too Many Requests"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Internal Server Error"
-          }
-        },
-        "summary": "Verify Evidence Pack"
-      }
-    },
-    "/v1/evidence-packs/{evidence_pack_id}": {
+    "/v2/evidence-packs/{evidence_pack_id}": {
       "get": {
-        "operationId": "get_evidence_pack_v1_evidence_packs__evidence_pack_id__get",
+        "operationId": "v2_get_evidence_pack_v2_evidence_packs__evidence_pack_id__get",
         "parameters": [
           {
             "in": "path",
@@ -1462,12 +1824,12 @@
             "description": "Internal Server Error"
           }
         },
-        "summary": "Get Evidence Pack"
+        "summary": "V2 Get Evidence Pack"
       }
     },
-    "/v1/evidence-packs/{evidence_pack_id}/signature": {
+    "/v2/evidence-packs/{evidence_pack_id}/export": {
       "get": {
-        "operationId": "get_evidence_pack_signature_v1_evidence_packs__evidence_pack_id__signature_get",
+        "operationId": "v2_export_v2_evidence_packs__evidence_pack_id__export_get",
         "parameters": [
           {
             "in": "path",
@@ -1477,15 +1839,23 @@
               "title": "Evidence Pack Id",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "format",
+            "required": false,
+            "schema": {
+              "default": "pdf",
+              "title": "Format",
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "200": {
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EvidencePackSignatureResponse"
-                }
+                "schema": {}
               }
             },
             "description": "Successful Response"
@@ -1561,17 +1931,17 @@
             "description": "Internal Server Error"
           }
         },
-        "summary": "Get Evidence Pack Signature"
+        "summary": "V2 Export"
       }
     },
-    "/v1/sanctions/screen": {
+    "/v2/screenings": {
       "post": {
-        "operationId": "sanctions_screen_v1_sanctions_screen_post",
+        "operationId": "v2_create_screening_v2_screenings_post",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ScreenRequest"
+                "$ref": "#/components/schemas/V2CreateScreeningRequest"
               }
             }
           },
@@ -1582,7 +1952,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ScreenResponse"
+                  "$ref": "#/components/schemas/V2CreateScreeningResponse"
                 }
               }
             },
@@ -1659,19 +2029,316 @@
             "description": "Internal Server Error"
           }
         },
-        "summary": "Sanctions Screen"
+        "summary": "V2 Create Screening"
       }
     },
-    "/v1/usage/summary": {
-      "get": {
-        "operationId": "usage_summary_v1_usage_summary_get",
+    "/v2/screenings/{screening_id}/decision": {
+      "post": {
+        "operationId": "v2_set_review_decision_v2_screenings__screening_id__decision_post",
         "parameters": [
           {
-            "in": "query",
-            "name": "since_ts",
+            "in": "path",
+            "name": "screening_id",
             "required": true,
             "schema": {
-              "title": "Since Ts",
+              "title": "Screening Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/V2ReviewDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2ReviewDecisionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "V2 Set Review Decision"
+      }
+    },
+    "/v2/webhooks/subscriptions": {
+      "get": {
+        "operationId": "v2_list_webhook_subscriptions_v2_webhooks_subscriptions_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/V2WebhookSubscription"
+                  },
+                  "title": "Response V2 List Webhook Subscriptions V2 Webhooks Subscriptions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "V2 List Webhook Subscriptions"
+      },
+      "post": {
+        "operationId": "v2_create_webhook_subscription_v2_webhooks_subscriptions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/V2CreateWebhookSubscriptionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2WebhookSubscription"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "V2 Create Webhook Subscription"
+      }
+    },
+    "/v2/webhooks/subscriptions/{subscription_id}": {
+      "delete": {
+        "operationId": "v2_delete_webhook_subscription_v2_webhooks_subscriptions__subscription_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "subscription_id",
+            "required": true,
+            "schema": {
+              "title": "Subscription Id",
               "type": "string"
             }
           }
@@ -1682,27 +2349,87 @@
               "application/json": {
                 "schema": {
                   "additionalProperties": {
-                    "type": "integer"
+                    "type": "string"
                   },
-                  "title": "Response Usage Summary V1 Usage Summary Get",
+                  "title": "Response V2 Delete Webhook Subscription V2 Webhooks Subscriptions  Subscription Id  Delete",
                   "type": "object"
                 }
               }
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           }
         },
-        "summary": "Usage Summary"
+        "summary": "V2 Delete Webhook Subscription"
       }
     }
   }

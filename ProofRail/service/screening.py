@@ -49,4 +49,19 @@ def screen_subject_name(
     name_norm = normalise_name(subject_name)
     hits = sorted([src for src, names in sanctions_name_sets.items() if name_norm in names])
     decision: Decision = "block" if hits else "allow"
-    return ScreeningResult(decision=decision, hits=hits, name_norm=name_norm)
+    if hits:
+        match_type = "exact_normalized_name"
+        score = 100
+        reason_codes = ["sanctions_exact_name_match"]
+    else:
+        match_type = "none"
+        score = 0
+        reason_codes = ["no_match"]
+    return ScreeningResult(
+        decision=decision,
+        hits=hits,
+        name_norm=name_norm,
+        match_type=match_type,
+        score=score,
+        reason_codes=reason_codes,
+    )

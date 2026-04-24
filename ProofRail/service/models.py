@@ -23,9 +23,19 @@ class ScreeningResult:
     decision: Decision
     hits: list[str]
     name_norm: str
+    match_type: str
+    score: int
+    reason_codes: list[str]
 
     def to_dict(self) -> dict[str, Any]:
-        return {"decision": self.decision, "hits": self.hits, "name_norm": self.name_norm}
+        return {
+            "decision": self.decision,
+            "hits": self.hits,
+            "name_norm": self.name_norm,
+            "match_type": self.match_type,
+            "score": self.score,
+            "reason_codes": self.reason_codes,
+        }
 
 
 @dataclass(frozen=True)
