@@ -134,6 +134,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   job_type TEXT NOT NULL,
   payload_json TEXT NOT NULL,
   status TEXT NOT NULL,
+  locked_until TEXT NULL,
   attempt_count INTEGER NOT NULL DEFAULT 0,
   run_at TEXT NOT NULL,
   last_error TEXT NULL,
@@ -141,6 +142,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_due ON jobs(status, run_at);
+CREATE INDEX IF NOT EXISTS idx_jobs_locked_until ON jobs(locked_until);
 """
 
 
@@ -170,6 +172,11 @@ class ProofRailDbPg:
                 stmts = [s.strip() for s in SCHEMA_SQL.split(";") if s.strip()]
                 for s in stmts:
                     con.execute(s)
+                # Back-compat migration for existing pilot DBs.
+                con.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS locked_until TEXT NULL")
+                con.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_jobs_locked_until ON jobs(locked_until)"
+                )
             finally:
                 con.execute("SELECT pg_advisory_unlock(741_224_001)")
 
@@ -358,7 +365,16 @@ class ProofRailDbPg:
                 "INSERT INTO cases(case_id, created_at, updated_at, customer_id, screening_id, evidence_pack_id, status, assignee) "
                 "VALUES (%s,%s,%s,%s,%s,%s,%s,%s) "
                 "ON CONFLICT(case_id) DO UPDATE SET updated_at=EXCLUDED.updated_at, status=EXCLUDED.status, evidence_pack_id=EXCLUDED.evidence_pack_id, assignee=COALESCE(EXCLUDED.assignee, cases.assignee)",
-                (case_id, created_at, updated_at, customer_id, screening_id, evidence_pack_id, status, assignee),
+                (
+                    case_id,
+                    created_at,
+                    updated_at,
+                    customer_id,
+                    screening_id,
+                    evidence_pack_id,
+                    status,
+                    assignee,
+                ),
             )
 
     def get_case(self, *, case_id: str) -> dict[str, str] | None:
@@ -593,7 +609,9 @@ class ProofRailDbPg:
             "next_attempt_at": str(r[8]),
         }
 
-    def mark_webhook_delivery_success(self, *, delivery_id: int, now: str, status_code: int) -> None:
+    def mark_webhook_delivery_success(
+        self, *, delivery_id: int, now: str, status_code: int
+    ) -> None:
         with self._connect() as con:
             con.execute(
                 "UPDATE webhook_deliveries SET status='delivered', last_attempt_at=%s, last_status_code=%s, updated_at=%s WHERE delivery_id=%s",
@@ -622,7 +640,9 @@ class ProofRailDbPg:
                 ),
             )
 
-    def mark_webhook_delivery_failed(self, *, delivery_id: int, now: str, error: str | None) -> None:
+    def mark_webhook_delivery_failed(
+        self, *, delivery_id: int, now: str, error: str | None
+    ) -> None:
         with self._connect() as con:
             con.execute(
                 "UPDATE webhook_deliveries SET status='failed', last_attempt_at=%s, last_error=%s, updated_at=%s WHERE delivery_id=%s",
@@ -640,14 +660,31 @@ class ProofRailDbPg:
             ).fetchone()
             return int(r[0]) if r else 0
 
-    def list_due_jobs(self, *, now: str, limit: int = 50) -> list[dict[str, Any]]:
+    def claim_due_jobs(
+        self, *, now: str, locked_until: str, limit: int = 50
+    ) -> list[dict[str, Any]]:
         limit_n = max(1, min(int(limit), 500))
         with self._connect() as con:
             rows = con.execute(
-                "SELECT job_id, job_type, payload_json, status, attempt_count "
-                "FROM jobs WHERE status IN ('queued','retry') AND run_at <= %s "
-                "ORDER BY run_at ASC LIMIT %s",
-                (now, limit_n),
+                """
+                WITH picked AS (
+                  SELECT job_id
+                  FROM jobs
+                  WHERE status IN ('queued','retry')
+                    AND run_at <= %s
+                    AND (locked_until IS NULL OR locked_until <= %s)
+                  ORDER BY run_at ASC
+                  LIMIT %s
+                  FOR UPDATE SKIP LOCKED
+                )
+                UPDATE jobs j
+                SET locked_until = %s,
+                    updated_at = %s
+                FROM picked
+                WHERE j.job_id = picked.job_id
+                RETURNING j.job_id, j.job_type, j.payload_json, j.status, j.attempt_count
+                """,
+                (now, now, limit_n, locked_until, now),
             ).fetchall()
         return [
             {
@@ -683,7 +720,9 @@ class ProofRailDbPg:
 
     def webhook_delivery_counts(self) -> dict[str, int]:
         with self._connect() as con:
-            rows = con.execute("SELECT status, COUNT(*) FROM webhook_deliveries GROUP BY status").fetchall()
+            rows = con.execute(
+                "SELECT status, COUNT(*) FROM webhook_deliveries GROUP BY status"
+            ).fetchall()
         return {str(r[0]): int(r[1]) for r in rows}
 
     def list_failed_webhook_deliveries(self, *, limit: int = 100) -> list[dict[str, Any]]:
@@ -713,4 +752,3 @@ class ProofRailDbPg:
         for r in rows:
             out.append({cols[i]: r[i] for i in range(len(cols))})
         return out
-

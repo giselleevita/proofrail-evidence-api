@@ -100,6 +100,18 @@ def screen_subject_name(
             reason_codes.append("subject_country_provided")
         if subject_dob:
             reason_codes.append("subject_dob_provided")
+        # Pilot-defensible disambiguation: we currently don't have reliable DOB/country
+        # attributes in the sanctions sources, so a name-only hit with extra subject
+        # attributes becomes a manual review signal rather than an automatic block.
+        if decision == "block" and (subject_country or subject_dob):
+            decision = "review"
+            match_type = f"{match_type}+needs_disambiguation"
+            score = min(score, 85)
+            reason_codes.append("needs_dob_country_disambiguation")
+        if decision == "review" and (subject_country or subject_dob):
+            penalty = (5 if subject_country else 0) + (5 if subject_dob else 0)
+            score = max(0, min(100, score - penalty))
+            reason_codes.append("disambiguation_attributes_present")
 
     return ScreeningResult(
         decision=decision,

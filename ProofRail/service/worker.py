@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import signal
 import time
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from ProofRail.service.config import load_config
 from ProofRail.service.state import build_state
@@ -30,15 +32,97 @@ def run() -> int:
     signal.signal(signal.SIGINT, stop.request)
     signal.signal(signal.SIGTERM, stop.request)
 
+    last_gc_at = 0.0
     while not stop.is_set:
-        process_once(state)
+        now_s = time.time()
+        do_gc = (now_s - last_gc_at) >= 60.0
+        process_once(state, do_gc=do_gc)
+        if do_gc:
+            last_gc_at = now_s
         time.sleep(0.5)
     return 0
 
 
-def process_once(state) -> None:  # noqa: ANN001
+def _gc_raw_fetches(*, raw_dir: Path, cutoff: datetime, customer_id: str | None) -> int:
+    root = raw_dir / (customer_id or "")
+    if not root.exists():
+        return 0
+    deleted = 0
+    for p in root.rglob("*"):
+        try:
+            if not p.is_file():
+                continue
+            mtime = datetime.fromtimestamp(p.stat().st_mtime, tz=UTC)
+            if mtime >= cutoff:
+                continue
+            p.unlink()
+            deleted += 1
+        except Exception:  # noqa: BLE001
+            continue
+    return deleted
+
+
+def _run_retention_gc(state) -> None:  # noqa: ANN001
+    now_dt = datetime.now(UTC)
+    usage_cutoff = now_dt - timedelta(days=int(state.cfg.usage_retention_days))
+    evidence_cutoff = now_dt - timedelta(days=int(state.cfg.evidence_retention_days))
+
+    usage_cutoff_iso = usage_cutoff.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    deleted_usage = 0
+    try:
+        deleted_usage = int(state.db.delete_usage_events_before(usage_cutoff_iso))
+    except Exception:  # noqa: BLE001
+        deleted_usage = 0
+
+    deleted_packs = 0
+    deleted_blobs = 0
+    deleted_raw = 0
+    try:
+        deleted_packs = int(state.store.delete_packs_before(cutoff=evidence_cutoff, dry_run=False))
+        deleted_blobs = int(
+            state.store.delete_unreferenced_blobs(cutoff=evidence_cutoff, dry_run=False)
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        deleted_raw = int(
+            _gc_raw_fetches(raw_dir=state.cfg.raw_dir, cutoff=evidence_cutoff, customer_id=None)
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+    try:
+        state.db.insert_audit_event(
+            ts=utc_now_iso(),
+            actor="worker",
+            action="gc_run",
+            request_id=None,
+            details_json=json.dumps(
+                {
+                    "usage_retention_days": int(state.cfg.usage_retention_days),
+                    "evidence_retention_days": int(state.cfg.evidence_retention_days),
+                    "deleted": {
+                        "usage_events": deleted_usage,
+                        "evidence_packs": deleted_packs,
+                        "raw_fetch_files": deleted_raw,
+                        "unreferenced_blobs": deleted_blobs,
+                    },
+                }
+            ),
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def process_once(state, *, do_gc: bool = False) -> None:  # noqa: ANN001
     now = utc_now_iso()
-    jobs = state.db.list_due_jobs(now=now, limit=100)
+    lease_until = (
+        (datetime.now(UTC) + timedelta(seconds=30))
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+    jobs = state.db.claim_due_jobs(now=now, locked_until=lease_until, limit=100)
     for j in jobs:
         if str(j["job_type"]) != "webhook_delivery":
             state.db.mark_job_failed(job_id=int(j["job_id"]), now=now, error="unknown_job_type")
@@ -106,6 +190,9 @@ def process_once(state) -> None:  # noqa: ANN001
                     error=res.error,
                 )
                 state.db.mark_job_success(job_id=int(j["job_id"]), now=now)
+
+    if do_gc:
+        _run_retention_gc(state)
 
 
 def main() -> None:
