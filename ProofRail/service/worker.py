@@ -99,17 +99,8 @@ def _run_retention_gc(state) -> None:  # noqa: ANN001
     try:
         jobs_cutoff_iso = jobs_cutoff.replace(microsecond=0).isoformat().replace("+00:00", "Z")
         deleted_jobs = int(
-            state.db.delete_jobs_before(ts_exclusive=jobs_cutoff_iso, statuses=["done", "failed"])
+            state.db.delete_jobs_before(cutoff_ts=jobs_cutoff_iso, statuses=["done", "failed"])
         )
-    except TypeError:
-        # Postgres backend signature differs slightly.
-        try:
-            jobs_cutoff_iso = jobs_cutoff.replace(microsecond=0).isoformat().replace("+00:00", "Z")
-            deleted_jobs = int(
-                state.db.delete_jobs_before(cutoff_ts=jobs_cutoff_iso, statuses=["done", "failed"])
-            )
-        except Exception:  # noqa: BLE001
-            deleted_jobs = 0
     except Exception:  # noqa: BLE001
         deleted_jobs = 0
 
