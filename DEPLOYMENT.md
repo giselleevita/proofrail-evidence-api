@@ -27,6 +27,7 @@ Optional:
 
 - `PROOFRAIL_S3_PREFIX="pilot/"`
 - `PROOFRAIL_RPM="120"`
+- `PROOFRAIL_JOBS_RETENTION_DAYS="7"` (worker deletes old `done`/`failed` jobs)
 
 ## Local parity stack (Postgres + MinIO)
 
@@ -78,4 +79,6 @@ curl -sS http://127.0.0.1:8001/v1/admin/metrics -H 'x-admin-key: change-me'
 
 - The default `docker compose up` still runs the SQLite + filesystem demo stack on port `8000`.
 - For pilots, use the Postgres + S3 stack (`--profile pilot`) so you don’t have to migrate data later.
+- For safe retries of write requests, send an `Idempotency-Key` header on `POST /v2/screenings`, `POST /v2/cases/{case_id}/events`, and `POST /v2/webhooks/subscriptions`.
+- For paging through list endpoints, use `limit` + `cursor` query params and the `x-next-cursor` response header on `GET /v2/cases` and `GET /v2/webhooks/subscriptions`.
 
