@@ -8,7 +8,7 @@ SLOs are **targets** for internal reliability; customer-facing SLAs may be stric
 |------|--------|----------------------|
 | Production | 99.9% successful `GET /readyz` and `GET /healthz` from synthetic probe | 30 rolling days |
 
-**Prometheus (when `PROOFRAIL_PROMETHEUS_METRICS=1`)**: use your probe success rate; correlate with ingress 5xx.
+**Prometheus (when `PROOFRAIL_PROMETHEUS_METRICS=1`)**: use your probe success rate; correlate with ingress 5xx. If **`PROOFRAIL_METRICS_BEARER_TOKEN`** is set, configure the scraper with the same bearer secret.
 
 ## Latency (API, authenticated)
 

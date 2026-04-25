@@ -25,5 +25,5 @@ pip-audit .
 
 ## Dependabot
 
-- This repo includes [`.github/dependabot.yml`](../../.github/dependabot.yml) for **version updates** (weekly PRs for pip + GitHub Actions).
+- This repo includes [`.github/dependabot.yml`](../../.github/dependabot.yml) for **version updates** (monthly PRs for pip + GitHub Actions).
 - In GitHub repository settings, enable **Dependabot security updates** (alert-driven) if not already on; that complements version PRs. Record the enablement date in your compliance tracker.

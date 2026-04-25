@@ -39,6 +39,8 @@ class AppConfig:
     max_request_bytes: int
 
     enable_prometheus_metrics: bool
+    # If set, GET /metrics requires Authorization: Bearer <token> (constant-time compare).
+    metrics_bearer_token: str | None
     db_pool_min: int
     db_pool_max: int
 
@@ -125,6 +127,10 @@ def load_config(environ: dict[str, str] | None = None) -> AppConfig:
         "true",
         "yes",
     )
+    metrics_bearer_token_raw = env.get("PROOFRAIL_METRICS_BEARER_TOKEN")
+    if metrics_bearer_token_raw is not None:
+        metrics_bearer_token_raw = metrics_bearer_token_raw.strip()
+    metrics_bearer_token = metrics_bearer_token_raw or None
     db_pool_min = int(env.get("PROOFRAIL_DB_POOL_MIN", "1"))
     db_pool_max = int(env.get("PROOFRAIL_DB_POOL_MAX", "20"))
 
@@ -174,6 +180,7 @@ def load_config(environ: dict[str, str] | None = None) -> AppConfig:
         jobs_retention_days=jobs_retention_days,
         max_request_bytes=max_request_bytes,
         enable_prometheus_metrics=enable_prometheus_metrics,
+        metrics_bearer_token=metrics_bearer_token,
         db_pool_min=db_pool_min,
         db_pool_max=db_pool_max,
         webhook_timeout_s=webhook_timeout_s,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import json
 import os
 from datetime import UTC, datetime, timedelta
@@ -1465,7 +1466,23 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
     if state.cfg.enable_prometheus_metrics:
 
         @app.get("/metrics")
-        def prometheus_metrics() -> Response:
+        def prometheus_metrics(request: Request) -> Response:
+            tok = state.cfg.metrics_bearer_token
+            if tok:
+                auth = request.headers.get("authorization") or ""
+                if not auth.lower().startswith("bearer "):
+                    return Response(
+                        status_code=401,
+                        content="# unauthorized\n",
+                        media_type="text/plain; version=0.0.4; charset=utf-8",
+                    )
+                got = auth[7:].strip()
+                if not hmac.compare_digest(got, tok):
+                    return Response(
+                        status_code=401,
+                        content="# unauthorized\n",
+                        media_type="text/plain; version=0.0.4; charset=utf-8",
+                    )
             lines: list[str] = []
             lines.append("# HELP proofrail_info ProofRail API process (static label).")
             lines.append("# TYPE proofrail_info gauge")
