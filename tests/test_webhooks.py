@@ -54,6 +54,15 @@ class TestWebhooks(unittest.TestCase):
         )
         self.assertEqual(sub.status_code, 200)
 
+        # Pagination headers (v2 list)
+        l1 = self.client.get(
+            "/v2/webhooks/subscriptions?limit=1",
+            headers={"x-api-key": self.api_key},
+        )
+        self.assertEqual(l1.status_code, 200)
+        self.assertEqual(len(l1.json()), 1)
+        self.assertTrue(l1.headers.get("x-next-cursor"))
+
         # Trigger event: create screening (will enqueue delivery)
         s = self.client.post(
             "/v2/screenings",

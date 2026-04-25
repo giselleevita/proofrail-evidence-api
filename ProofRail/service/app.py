@@ -993,9 +993,29 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
         responses=ERROR_RESPONSES,
     )
     def v2_list_webhook_subscriptions(
+        response: Response,
+        limit: int = 50,
+        cursor: str | None = None,
         principal=Depends(principal_from_request),
     ) -> list[V2WebhookSubscription]:
-        rows = state.db.list_webhook_subscriptions(customer_id=principal.customer_id)
+        cursor_created_at: str | None = None
+        cursor_subscription_id: str | None = None
+        if cursor:
+            try:
+                cursor_created_at, cursor_subscription_id = cursor.split("|", 1)
+            except ValueError:
+                raise_http_error(
+                    status_code=422, code="validation_error", details={"cursor": "bad_format"}
+                )
+        rows = state.db.list_webhook_subscriptions(
+            customer_id=principal.customer_id,
+            limit=limit,
+            cursor_created_at=cursor_created_at,
+            cursor_subscription_id=cursor_subscription_id,
+        )
+        if len(rows) >= max(1, min(500, int(limit))):
+            last = rows[-1]
+            response.headers["x-next-cursor"] = f"{last['created_at']}|{last['subscription_id']}"
         return [
             V2WebhookSubscription(
                 subscription_id=str(r["subscription_id"]),
@@ -1114,16 +1134,35 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
 
     @app.get("/v2/cases", response_model=list[V2CaseSummary], responses=ERROR_RESPONSES)
     def v2_list_cases(
+        response: Response,
         status: str | None = None,
         assignee: str | None = None,
         limit: int = 50,
+        cursor: str | None = None,
         principal=Depends(principal_from_request),
     ) -> list[V2CaseSummary]:
         if "read:evidence" not in principal.scopes:
             raise_http_error(status_code=403, code="missing_scope")
+        cursor_updated_at: str | None = None
+        cursor_case_id: str | None = None
+        if cursor:
+            try:
+                cursor_updated_at, cursor_case_id = cursor.split("|", 1)
+            except ValueError:
+                raise_http_error(
+                    status_code=422, code="validation_error", details={"cursor": "bad_format"}
+                )
         rows = state.db.list_cases(
-            customer_id=principal.customer_id, status=status, assignee=assignee, limit=limit
+            customer_id=principal.customer_id,
+            status=status,
+            assignee=assignee,
+            limit=limit,
+            cursor_updated_at=cursor_updated_at,
+            cursor_case_id=cursor_case_id,
         )
+        if len(rows) >= max(1, min(200, int(limit))):
+            last = rows[-1]
+            response.headers["x-next-cursor"] = f"{last['updated_at']}|{last['case_id']}"
         out: list[V2CaseSummary] = []
         for r in rows:
             subject_name: str | None = None
