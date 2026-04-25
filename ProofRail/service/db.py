@@ -153,6 +153,18 @@ CREATE TABLE IF NOT EXISTS jobs (
   updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_due ON jobs(status, run_at);
+
+CREATE TABLE IF NOT EXISTS idempotency_keys (
+  customer_id TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  idem_key TEXT NOT NULL,
+  request_sha256 TEXT NOT NULL,
+  status_code INTEGER NOT NULL,
+  response_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(customer_id, scope, idem_key)
+);
+CREATE INDEX IF NOT EXISTS idx_idempotency_customer_scope ON idempotency_keys(customer_id, scope, created_at);
 """
 
 
@@ -248,6 +260,20 @@ class ProofRailDb:
                     "CREATE TABLE IF NOT EXISTS jobs (job_id INTEGER PRIMARY KEY AUTOINCREMENT, job_type TEXT NOT NULL, job_key TEXT NULL, payload_json TEXT NOT NULL, status TEXT NOT NULL, attempt_count INTEGER NOT NULL DEFAULT 0, run_at TEXT NOT NULL, last_error TEXT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
                 )
                 con.execute("CREATE INDEX IF NOT EXISTS idx_jobs_due ON jobs(status, run_at)")
+
+            # Idempotency keys (safe migration).
+            if (
+                con.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='idempotency_keys'"
+                ).fetchone()
+                is None
+            ):
+                con.execute(
+                    "CREATE TABLE IF NOT EXISTS idempotency_keys (customer_id TEXT NOT NULL, scope TEXT NOT NULL, idem_key TEXT NOT NULL, request_sha256 TEXT NOT NULL, status_code INTEGER NOT NULL, response_json TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(customer_id, scope, idem_key))"
+                )
+                con.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_idempotency_customer_scope ON idempotency_keys(customer_id, scope, created_at)"
+                )
 
             # Jobs leasing (safe migration): add locked_until column + index if missing.
             cols = {r["name"] for r in con.execute("PRAGMA table_info(jobs)").fetchall()}
@@ -768,6 +794,43 @@ class ProofRailDb:
                 (cutoff_ts, *st),
             )
             return int(cur.rowcount or 0)
+
+    def get_idempotency_record(
+        self, *, customer_id: str, scope: str, idem_key: str
+    ) -> dict[str, Any] | None:
+        with self._connect() as con:
+            row = con.execute(
+                "SELECT customer_id, scope, idem_key, request_sha256, status_code, response_json, created_at "
+                "FROM idempotency_keys WHERE customer_id = ? AND scope = ? AND idem_key = ?",
+                (customer_id, scope, idem_key),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def put_idempotency_record(
+        self,
+        *,
+        customer_id: str,
+        scope: str,
+        idem_key: str,
+        request_sha256: str,
+        status_code: int,
+        response_json: str,
+        created_at: str,
+    ) -> None:
+        with self._connect() as con:
+            con.execute(
+                "INSERT OR IGNORE INTO idempotency_keys(customer_id, scope, idem_key, request_sha256, status_code, response_json, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    customer_id,
+                    scope,
+                    idem_key,
+                    request_sha256,
+                    int(status_code),
+                    response_json,
+                    created_at,
+                ),
+            )
 
     def mark_job_success(self, *, job_id: int, now: str) -> None:
         with self._connect() as con:

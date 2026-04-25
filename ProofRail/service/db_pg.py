@@ -146,6 +146,18 @@ CREATE TABLE IF NOT EXISTS jobs (
 CREATE INDEX IF NOT EXISTS idx_jobs_due ON jobs(status, run_at);
 CREATE INDEX IF NOT EXISTS idx_jobs_locked_until ON jobs(locked_until);
 CREATE INDEX IF NOT EXISTS idx_jobs_key ON jobs(job_type, job_key);
+
+CREATE TABLE IF NOT EXISTS idempotency_keys (
+  customer_id TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  idem_key TEXT NOT NULL,
+  request_sha256 TEXT NOT NULL,
+  status_code INTEGER NOT NULL,
+  response_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(customer_id, scope, idem_key)
+);
+CREATE INDEX IF NOT EXISTS idx_idempotency_customer_scope ON idempotency_keys(customer_id, scope, created_at);
 """
 
 
@@ -182,6 +194,13 @@ class ProofRailDbPg:
                     "CREATE INDEX IF NOT EXISTS idx_jobs_locked_until ON jobs(locked_until)"
                 )
                 con.execute("CREATE INDEX IF NOT EXISTS idx_jobs_key ON jobs(job_type, job_key)")
+                # Idempotency keys table (best-effort).
+                con.execute(
+                    "CREATE TABLE IF NOT EXISTS idempotency_keys (customer_id TEXT NOT NULL, scope TEXT NOT NULL, idem_key TEXT NOT NULL, request_sha256 TEXT NOT NULL, status_code INTEGER NOT NULL, response_json TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(customer_id, scope, idem_key))"
+                )
+                con.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_idempotency_customer_scope ON idempotency_keys(customer_id, scope, created_at)"
+                )
             finally:
                 con.execute("SELECT pg_advisory_unlock(741_224_001)")
 
@@ -786,6 +805,53 @@ class ProofRailDbPg:
             "created_at": str(r[7]),
             "updated_at": str(r[8]),
         }
+
+    def get_idempotency_record(
+        self, *, customer_id: str, scope: str, idem_key: str
+    ) -> dict[str, Any] | None:
+        with self._connect() as con:
+            r = con.execute(
+                "SELECT customer_id, scope, idem_key, request_sha256, status_code, response_json, created_at "
+                "FROM idempotency_keys WHERE customer_id=%s AND scope=%s AND idem_key=%s",
+                (customer_id, scope, idem_key),
+            ).fetchone()
+        if not r:
+            return None
+        return {
+            "customer_id": str(r[0]),
+            "scope": str(r[1]),
+            "idem_key": str(r[2]),
+            "request_sha256": str(r[3]),
+            "status_code": int(r[4]),
+            "response_json": str(r[5]),
+            "created_at": str(r[6]),
+        }
+
+    def put_idempotency_record(
+        self,
+        *,
+        customer_id: str,
+        scope: str,
+        idem_key: str,
+        request_sha256: str,
+        status_code: int,
+        response_json: str,
+        created_at: str,
+    ) -> None:
+        with self._connect() as con:
+            con.execute(
+                "INSERT INTO idempotency_keys(customer_id, scope, idem_key, request_sha256, status_code, response_json, created_at) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
+                (
+                    customer_id,
+                    scope,
+                    idem_key,
+                    request_sha256,
+                    int(status_code),
+                    response_json,
+                    created_at,
+                ),
+            )
 
     def delete_jobs_before(self, *, cutoff_ts: str, statuses: list[str]) -> int:
         st = [str(s) for s in statuses if str(s)]
