@@ -758,14 +758,14 @@ class ProofRailDb:
             ).fetchone()
         return dict(row) if row is not None else None
 
-    def delete_jobs_before(self, *, ts_exclusive: str, statuses: list[str]) -> int:
+    def delete_jobs_before(self, *, cutoff_ts: str, statuses: list[str]) -> int:
         st = [str(s) for s in statuses if str(s)]
         if not st:
             return 0
         with self._connect() as con:
             cur = con.execute(
                 f"DELETE FROM jobs WHERE updated_at < ? AND status IN ({','.join(['?'] * len(st))})",
-                (ts_exclusive, *st),
+                (cutoff_ts, *st),
             )
             return int(cur.rowcount or 0)
 
