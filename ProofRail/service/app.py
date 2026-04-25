@@ -563,14 +563,17 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
         job_counts = {}
         job_lag_s = 0
         job_locked = 0
+        job_oldest = None
         try:
             job_counts = state.db.job_counts_by_status()
             job_lag_s = int(state.db.job_lag_seconds(now=utc_now_iso()))
             job_locked = int(state.db.job_locked_count(now=utc_now_iso()))
+            job_oldest = state.db.get_oldest_pending_job()
         except Exception:
             job_counts = {}
             job_lag_s = 0
             job_locked = 0
+            job_oldest = None
         return {
             "webhooks": {
                 "deliveries_by_status": webhook_counts,
@@ -579,6 +582,7 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
                 "by_status": job_counts,
                 "lag_seconds": job_lag_s,
                 "locked": job_locked,
+                "oldest_pending": job_oldest,
             },
             "usage": {
                 "queue_depth": int(state.usage_queue.qsize()),
