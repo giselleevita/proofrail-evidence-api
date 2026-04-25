@@ -26,8 +26,14 @@ This repo is designed to start with a **single-customer pilot** on managed hosti
 Optional:
 
 - `PROOFRAIL_S3_PREFIX="pilot/"`
-- `PROOFRAIL_RPM="120"`
+- `PROOFRAIL_RPM="120"` (per–API-key throughput after authentication)
+- `PROOFRAIL_PREAUTH_RPM="60"` (per-IP cap **before** DB key resolution when `x-api-key` is present)
+- `PROOFRAIL_RATELIMIT_MAX_BUCKETS="50000"` (in-memory rate limiter LRU cap; set `0` or `none` for unbounded — not recommended)
+- `PROOFRAIL_DB_POOL_MIN="1"` / `PROOFRAIL_DB_POOL_MAX="20"` (Postgres connection pool sizes)
+- `PROOFRAIL_PROMETHEUS_METRICS="1"` — exposes plaintext **`/metrics`** (protect with network policy or auth at the edge)
 - `PROOFRAIL_JOBS_RETENTION_DAYS="7"` (worker deletes old `done`/`failed` jobs)
+
+Operations and SLOs: see **`RUNBOOK_INCIDENT.md`**, **`RUNBOOK_WEBHOOKS.md`**, **`RUNBOOK_DR.md`**, and **`SLO.md`**. Compliance index: **`docs/compliance/README.md`**.
 
 ## Local parity stack (Postgres + MinIO)
 

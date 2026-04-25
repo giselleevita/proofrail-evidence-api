@@ -563,16 +563,19 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
         job_counts = {}
         job_lag_s = 0
         job_locked = 0
+        job_stale_leases = 0
         job_oldest = None
         try:
             job_counts = state.db.job_counts_by_status()
             job_lag_s = int(state.db.job_lag_seconds(now=utc_now_iso()))
             job_locked = int(state.db.job_locked_count(now=utc_now_iso()))
+            job_stale_leases = int(state.db.count_stale_job_leases(now=utc_now_iso()))
             job_oldest = state.db.get_oldest_pending_job()
         except Exception:
             job_counts = {}
             job_lag_s = 0
             job_locked = 0
+            job_stale_leases = 0
             job_oldest = None
         return {
             "webhooks": {
@@ -582,6 +585,7 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
                 "by_status": job_counts,
                 "lag_seconds": job_lag_s,
                 "locked": job_locked,
+                "stale_leases": job_stale_leases,
                 "oldest_pending": job_oldest,
             },
             "usage": {
@@ -596,8 +600,30 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
         dependencies=[Depends(require_admin)],
         responses=ERROR_RESPONSES,
     )
-    def admin_webhook_dlq(limit: int = 100) -> dict[str, Any]:
-        items = state.db.list_failed_webhook_deliveries(limit=limit)
+    def admin_webhook_dlq(
+        response: Response,
+        limit: int = 100,
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        cursor_updated_at: str | None = None
+        cursor_delivery_id: int | None = None
+        if cursor:
+            try:
+                cursor_updated_at, sid = cursor.split("|", 1)
+                cursor_delivery_id = int(sid)
+            except ValueError:
+                raise_http_error(
+                    status_code=422, code="validation_error", details={"cursor": "bad_format"}
+                )
+        limit_n = max(1, min(500, int(limit)))
+        items = state.db.list_failed_webhook_deliveries(
+            limit=limit_n,
+            cursor_updated_at=cursor_updated_at,
+            cursor_delivery_id=cursor_delivery_id,
+        )
+        if len(items) >= limit_n:
+            last = items[-1]
+            response.headers["x-next-cursor"] = f"{last['updated_at']}|{last['delivery_id']}"
         return {"items": items}
 
     @app.get(
@@ -605,8 +631,30 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
         dependencies=[Depends(require_admin)],
         responses=ERROR_RESPONSES,
     )
-    def admin_jobs_dlq(limit: int = 100) -> dict[str, Any]:
-        items = state.db.list_failed_jobs(limit=limit)
+    def admin_jobs_dlq(
+        response: Response,
+        limit: int = 100,
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        cursor_updated_at: str | None = None
+        cursor_job_id: int | None = None
+        if cursor:
+            try:
+                cursor_updated_at, jid = cursor.split("|", 1)
+                cursor_job_id = int(jid)
+            except ValueError:
+                raise_http_error(
+                    status_code=422, code="validation_error", details={"cursor": "bad_format"}
+                )
+        limit_n = max(1, min(500, int(limit)))
+        items = state.db.list_failed_jobs(
+            limit=limit_n,
+            cursor_updated_at=cursor_updated_at,
+            cursor_job_id=cursor_job_id,
+        )
+        if len(items) >= limit_n:
+            last = items[-1]
+            response.headers["x-next-cursor"] = f"{last['updated_at']}|{last['job_id']}"
         return {"items": items}
 
     @app.get(
@@ -621,6 +669,7 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
             "by_status": {},
             "lag_seconds": 0,
             "locked": 0,
+            "stale_leases": 0,
             "oldest_pending": None,
             "failed_recent": [],
         }
@@ -636,6 +685,10 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
             out["locked"] = int(state.db.job_locked_count(now=now))
         except Exception:
             out["locked"] = 0
+        try:
+            out["stale_leases"] = int(state.db.count_stale_job_leases(now=now))
+        except Exception:
+            out["stale_leases"] = 0
         try:
             out["oldest_pending"] = state.db.get_oldest_pending_job()
         except Exception:
@@ -881,6 +934,16 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
     ) -> V2ReviewDecisionResponse:
         if "write:screen" not in principal.scopes:
             raise_http_error(status_code=403, code="missing_scope")
+        scope = _idempotency_scope(method="POST", path=f"/v2/screenings/{screening_id}/decision")
+        request_sha = _idempotency_request_sha(req.model_dump())
+        cached = _idempotency_maybe_return(
+            request=request,
+            principal=principal,
+            scope=scope,
+            request_sha=request_sha,
+        )
+        if cached is not None:
+            return cached  # type: ignore[return-value]
         screening = state.db.get_screening(screening_id)
         if screening is None or screening["customer_id"] != principal.customer_id:
             raise_http_error(status_code=404, code="screening_not_found")
@@ -935,12 +998,20 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
                 "decided_at": decided_at,
             },
         )
-        return V2ReviewDecisionResponse(
+        resp = V2ReviewDecisionResponse(
             screening_id=screening_id,
             decided_at=decided_at,
             outcome=req.outcome,
             note=req.note,
         )
+        _idempotency_store(
+            request=request,
+            principal=principal,
+            scope=scope,
+            request_sha=request_sha,
+            response_obj=resp.model_dump(),
+        )
+        return resp
 
     @app.post(
         "/v2/webhooks/subscriptions",
@@ -1390,6 +1461,50 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
             "content-disposition": f'attachment; filename="evidence-pack-{evidence_pack_id}.pdf"',
         }
         return Response(content=pdf_bytes, media_type="application/pdf", headers=headers)
+
+    if state.cfg.enable_prometheus_metrics:
+
+        @app.get("/metrics")
+        def prometheus_metrics() -> Response:
+            lines: list[str] = []
+            lines.append("# HELP proofrail_info ProofRail API process (static label).")
+            lines.append("# TYPE proofrail_info gauge")
+            lines.append('proofrail_info{version="0.1.0"} 1')
+            try:
+                qd = int(state.usage_queue.qsize())
+            except Exception:
+                qd = 0
+            lines.append(
+                "# HELP proofrail_usage_queue_depth In-memory usage event flush queue depth."
+            )
+            lines.append("# TYPE proofrail_usage_queue_depth gauge")
+            lines.append(f"proofrail_usage_queue_depth {qd}")
+            try:
+                db_ms = float(state.db.ping_ms())
+            except Exception:
+                db_ms = -1.0
+            lines.append("# HELP proofrail_db_ping_ms Last DB round-trip sample in milliseconds.")
+            lines.append("# TYPE proofrail_db_ping_ms gauge")
+            lines.append(f"proofrail_db_ping_ms {db_ms:.6f}")
+            now = utc_now_iso()
+            try:
+                stale = int(state.db.count_stale_job_leases(now=now))
+            except Exception:
+                stale = 0
+            lines.append(
+                "# HELP proofrail_jobs_stale_leases Non-terminal jobs whose lease timestamp is in the past."
+            )
+            lines.append("# TYPE proofrail_jobs_stale_leases gauge")
+            lines.append(f"proofrail_jobs_stale_leases {stale}")
+            try:
+                locked = int(state.db.job_locked_count(now=now))
+            except Exception:
+                locked = 0
+            lines.append("# HELP proofrail_jobs_locked Active job leases (locked_until > now).")
+            lines.append("# TYPE proofrail_jobs_locked gauge")
+            lines.append(f"proofrail_jobs_locked {locked}")
+            body = "\n".join(lines) + "\n"
+            return Response(content=body, media_type="text/plain; version=0.0.4; charset=utf-8")
 
     return app
 

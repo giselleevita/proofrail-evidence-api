@@ -55,6 +55,7 @@ class AppState:
     db: Any
     ingest_cache: IngestionCache
     limiter: RateLimiter
+    preauth_limiter: RateLimiter
     limiter_by_customer: dict[str, RateLimiter]
     limiter_lock: threading.Lock
     name_sets_cache: NameSetCache
@@ -85,13 +86,25 @@ def build_state(cfg: AppConfig) -> AppState:
     if cfg.db_url:
         from ProofRail.service.db_pg import DbPgConfig, ProofRailDbPg
 
-        db = ProofRailDbPg(DbPgConfig(url=cfg.db_url))
+        db = ProofRailDbPg(
+            DbPgConfig(
+                url=cfg.db_url,
+                pool_min_size=cfg.db_pool_min,
+                pool_max_size=cfg.db_pool_max,
+            )
+        )
     else:
         db = ProofRailDb(DbConfig(path=cfg.db_path))
 
     ingest_cache = IngestionCache(ttl_seconds=cfg.ingest_ttl_seconds)
 
-    limiter = RateLimiter(capacity=cfg.rpm, refill_per_s=cfg.rpm / 60.0)
+    mb = cfg.ratelimit_max_buckets
+    limiter = RateLimiter(capacity=cfg.rpm, refill_per_s=cfg.rpm / 60.0, max_buckets=mb)
+    preauth_limiter = RateLimiter(
+        capacity=cfg.preauth_rpm,
+        refill_per_s=cfg.preauth_rpm / 60.0,
+        max_buckets=mb,
+    )
     limiter_by_customer: dict[str, RateLimiter] = {}
     limiter_lock = threading.Lock()
 
@@ -108,6 +121,7 @@ def build_state(cfg: AppConfig) -> AppState:
         db=db,
         ingest_cache=ingest_cache,
         limiter=limiter,
+        preauth_limiter=preauth_limiter,
         limiter_by_customer=limiter_by_customer,
         limiter_lock=limiter_lock,
         name_sets_cache=name_sets_cache,
@@ -192,5 +206,11 @@ def attach_lifespan(app: FastAPI, state: AppState) -> None:
             state.usage_stop.set()
             if state.usage_thread is not None:
                 state.usage_thread.join(timeout=2.0)
+            db_close = getattr(state.db, "close", None)
+            if callable(db_close):
+                try:
+                    db_close()
+                except Exception:
+                    pass
 
     app.router.lifespan_context = lifespan

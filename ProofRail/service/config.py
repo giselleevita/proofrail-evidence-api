@@ -20,6 +20,9 @@ class AppConfig:
     signing_key_current: str | None
 
     rpm: int
+    # Per-IP limit before DB key resolution (mitigates invalid-key probing).
+    preauth_rpm: int
+    ratelimit_max_buckets: int | None
     ingest_ttl_seconds: int
     screen_cache_max: int
 
@@ -34,6 +37,10 @@ class AppConfig:
     jobs_retention_days: int
 
     max_request_bytes: int
+
+    enable_prometheus_metrics: bool
+    db_pool_min: int
+    db_pool_max: int
 
     webhook_timeout_s: float
     webhook_max_attempts: int
@@ -88,6 +95,17 @@ def load_config(environ: dict[str, str] | None = None) -> AppConfig:
         signing_key_current = next(iter(signing_keys.keys()))
 
     rpm = int(env.get("PROOFRAIL_RPM", "120"))
+    preauth_rpm = int(env.get("PROOFRAIL_PREAUTH_RPM", "60"))
+    ratelimit_max_buckets_raw = env.get("PROOFRAIL_RATELIMIT_MAX_BUCKETS", "50000").strip()
+    ratelimit_max_buckets: int | None
+    if not ratelimit_max_buckets_raw or ratelimit_max_buckets_raw.lower() in (
+        "0",
+        "none",
+        "unlimited",
+    ):
+        ratelimit_max_buckets = None
+    else:
+        ratelimit_max_buckets = int(ratelimit_max_buckets_raw)
     ingest_ttl_seconds = int(env.get("PROOFRAIL_INGEST_TTL_SECONDS", "3600"))
     screen_cache_max = int(env.get("PROOFRAIL_SCREEN_CACHE_MAX", "2048"))
 
@@ -101,6 +119,14 @@ def load_config(environ: dict[str, str] | None = None) -> AppConfig:
     evidence_retention_days = int(env.get("PROOFRAIL_EVIDENCE_RETENTION_DAYS", "30"))
     jobs_retention_days = int(env.get("PROOFRAIL_JOBS_RETENTION_DAYS", "7"))
     max_request_bytes = int(env.get("PROOFRAIL_MAX_REQUEST_BYTES", "1000000"))
+
+    enable_prometheus_metrics = env.get("PROOFRAIL_PROMETHEUS_METRICS", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    db_pool_min = int(env.get("PROOFRAIL_DB_POOL_MIN", "1"))
+    db_pool_max = int(env.get("PROOFRAIL_DB_POOL_MAX", "20"))
 
     webhook_timeout_s = float(env.get("PROOFRAIL_WEBHOOK_TIMEOUT_S", "5.0"))
     webhook_max_attempts = int(env.get("PROOFRAIL_WEBHOOK_MAX_ATTEMPTS", "8"))
@@ -135,6 +161,8 @@ def load_config(environ: dict[str, str] | None = None) -> AppConfig:
         signing_keys=signing_keys,
         signing_key_current=signing_key_current,
         rpm=rpm,
+        preauth_rpm=preauth_rpm,
+        ratelimit_max_buckets=ratelimit_max_buckets,
         ingest_ttl_seconds=ingest_ttl_seconds,
         screen_cache_max=screen_cache_max,
         usage_queue_max=usage_queue_max,
@@ -145,6 +173,9 @@ def load_config(environ: dict[str, str] | None = None) -> AppConfig:
         evidence_retention_days=evidence_retention_days,
         jobs_retention_days=jobs_retention_days,
         max_request_bytes=max_request_bytes,
+        enable_prometheus_metrics=enable_prometheus_metrics,
+        db_pool_min=db_pool_min,
+        db_pool_max=db_pool_max,
         webhook_timeout_s=webhook_timeout_s,
         webhook_max_attempts=webhook_max_attempts,
         webhook_retry_base_s=webhook_retry_base_s,

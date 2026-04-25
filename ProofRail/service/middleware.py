@@ -169,6 +169,12 @@ def install_request_middleware(app, state: AppState) -> None:
                         status_code=401, code="missing_api_key", request_id=request_id
                     )
 
+                preauth_key = request.client.host if request.client else "unknown"
+                if not state.preauth_limiter.allow(f"preauth:{preauth_key}"):
+                    return error_response(
+                        status_code=429, code="rate_limited", request_id=request_id
+                    )
+
                 resolved = state.db.resolve_api_key(hash_api_key(api_key))
                 if resolved is None:
                     anon_key = request.client.host if request.client else "unknown"
@@ -200,7 +206,9 @@ def install_request_middleware(app, state: AppState) -> None:
                             or int(effective_limiter.capacity) != effective_rpm
                         ):
                             effective_limiter = RateLimiter(
-                                capacity=effective_rpm, refill_per_s=effective_rpm / 60.0
+                                capacity=effective_rpm,
+                                refill_per_s=effective_rpm / 60.0,
+                                max_buckets=state.cfg.ratelimit_max_buckets,
                             )
                             state.limiter_by_customer[customer_id] = effective_limiter
 

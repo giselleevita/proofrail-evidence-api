@@ -1041,6 +1041,8 @@
             "type": "object"
           },
           "signature": {
+            "maxLength": 1024,
+            "minLength": 1,
             "title": "Signature",
             "type": "string"
           }

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -188,6 +189,12 @@ class ProofRailDb:
         con.execute("PRAGMA synchronous=NORMAL")
         con.execute("PRAGMA busy_timeout=30000")
         return con
+
+    def ping_ms(self) -> float:
+        t0 = time.perf_counter()
+        with self._connect() as con:
+            con.execute("SELECT 1").fetchone()
+        return (time.perf_counter() - t0) * 1000.0
 
     def _init(self) -> None:
         with self._connect() as con:
@@ -758,13 +765,25 @@ class ProofRailDb:
             out[str(r["status"])] = int(r["n"])
         return out
 
-    def list_failed_webhook_deliveries(self, *, limit: int = 100) -> list[dict[str, Any]]:
+    def list_failed_webhook_deliveries(
+        self,
+        *,
+        limit: int = 100,
+        cursor_updated_at: str | None = None,
+        cursor_delivery_id: int | None = None,
+    ) -> list[dict[str, Any]]:
         limit_n = max(1, min(500, int(limit)))
+        where = "status='failed'"
+        params: list[Any] = []
+        if cursor_updated_at is not None and cursor_delivery_id is not None:
+            where += " AND (updated_at < ? OR (updated_at = ? AND delivery_id < ?))"
+            params.extend([cursor_updated_at, cursor_updated_at, int(cursor_delivery_id)])
+        params.append(limit_n)
         with self._connect() as con:
             rows = con.execute(
                 "SELECT delivery_id, subscription_id, customer_id, event_type, event_id, status, attempt_count, next_attempt_at, last_attempt_at, last_status_code, last_error, created_at, updated_at "
-                "FROM webhook_deliveries WHERE status='failed' ORDER BY updated_at DESC LIMIT ?",
-                (limit_n,),
+                f"FROM webhook_deliveries WHERE {where} ORDER BY updated_at DESC, delivery_id DESC LIMIT ?",
+                params,
             ).fetchall()
         return [
             {k: (r[k] if r[k] is not None else None) for k in r.keys()}  # type: ignore[attr-defined]
@@ -854,13 +873,43 @@ class ProofRailDb:
         except Exception:  # noqa: BLE001
             return 0
 
-    def list_failed_jobs(self, *, limit: int = 100) -> list[dict[str, Any]]:
+    def count_stale_job_leases(self, *, now: str) -> int:
+        with self._connect() as con:
+            row = con.execute(
+                "SELECT COUNT(*) AS n FROM jobs WHERE status IN ('queued','retry') "
+                "AND locked_until IS NOT NULL AND locked_until < ?",
+                (now,),
+            ).fetchone()
+        return int(row["n"] if row is not None else 0)
+
+    def release_expired_job_leases(self, *, now: str) -> int:
+        with self._connect() as con:
+            cur = con.execute(
+                "UPDATE jobs SET locked_until = NULL, updated_at = ? "
+                "WHERE status IN ('queued','retry') AND locked_until IS NOT NULL AND locked_until < ?",
+                (now, now),
+            )
+        return int(cur.rowcount or 0)
+
+    def list_failed_jobs(
+        self,
+        *,
+        limit: int = 100,
+        cursor_updated_at: str | None = None,
+        cursor_job_id: int | None = None,
+    ) -> list[dict[str, Any]]:
         limit_n = max(1, min(int(limit), 500))
+        where = "status = 'failed'"
+        params: list[Any] = []
+        if cursor_updated_at is not None and cursor_job_id is not None:
+            where += " AND (updated_at < ? OR (updated_at = ? AND job_id < ?))"
+            params.extend([cursor_updated_at, cursor_updated_at, int(cursor_job_id)])
+        params.append(limit_n)
         with self._connect() as con:
             rows = con.execute(
                 "SELECT job_id, job_type, job_key, status, attempt_count, run_at, last_error, created_at, updated_at "
-                "FROM jobs WHERE status = 'failed' ORDER BY updated_at DESC LIMIT ?",
-                (limit_n,),
+                f"FROM jobs WHERE {where} ORDER BY updated_at DESC, job_id DESC LIMIT ?",
+                params,
             ).fetchall()
         return [dict(r) for r in rows]
 
