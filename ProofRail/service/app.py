@@ -145,6 +145,66 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
     def _parse_iso_z(ts: str) -> datetime:
         return datetime.fromisoformat(ts.replace("Z", "+00:00"))
 
+    def _idempotency_key(request: Request) -> str | None:
+        v = request.headers.get("Idempotency-Key")
+        if v is None:
+            return None
+        v = v.strip()
+        return v or None
+
+    def _idempotency_scope(*, method: str, path: str) -> str:
+        return f"{method.upper()} {path}"
+
+    def _idempotency_request_sha(obj: Any) -> str:
+        return sha256_hex(canonical_json_bytes(obj))
+
+    def _idempotency_maybe_return(
+        *,
+        request: Request,
+        principal: ApiPrincipal,
+        scope: str,
+        request_sha: str,
+    ) -> Response | None:
+        idem_key = _idempotency_key(request)
+        if not idem_key:
+            return None
+        rec = state.db.get_idempotency_record(
+            customer_id=principal.customer_id,
+            scope=scope,
+            idem_key=idem_key,
+        )
+        if rec is None:
+            return None
+        if str(rec.get("request_sha256") or "") != request_sha:
+            raise_http_error(status_code=409, code="idempotency_key_conflict")
+        return Response(
+            content=str(rec.get("response_json") or ""),
+            media_type="application/json",
+            status_code=int(rec.get("status_code") or 200),
+        )
+
+    def _idempotency_store(
+        *,
+        request: Request,
+        principal: ApiPrincipal,
+        scope: str,
+        request_sha: str,
+        response_obj: Any,
+        status_code: int = 200,
+    ) -> None:
+        idem_key = _idempotency_key(request)
+        if not idem_key:
+            return
+        state.db.put_idempotency_record(
+            customer_id=principal.customer_id,
+            scope=scope,
+            idem_key=idem_key,
+            request_sha256=request_sha,
+            status_code=int(status_code),
+            response_json=canonical_json_bytes(response_obj).decode("utf-8"),
+            created_at=utc_now_iso(),
+        )
+
     def _gc_raw_fetches(*, cutoff: datetime, customer_id: str | None, dry_run: bool) -> int:
         root = state.cfg.raw_dir / (customer_id or "")
         if not root.exists():
@@ -675,10 +735,21 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
     @app.post("/v2/screenings", response_model=V2CreateScreeningResponse, responses=ERROR_RESPONSES)
     def v2_create_screening(
         req: V2CreateScreeningRequest,
+        request: Request,
         principal=Depends(principal_from_request),
     ) -> V2CreateScreeningResponse:
         if "write:screen" not in principal.scopes:
             raise_http_error(status_code=403, code="missing_scope")
+        scope = _idempotency_scope(method="POST", path="/v2/screenings")
+        request_sha = _idempotency_request_sha(req.model_dump())
+        cached = _idempotency_maybe_return(
+            request=request,
+            principal=principal,
+            scope=scope,
+            request_sha=request_sha,
+        )
+        if cached is not None:
+            return cached  # type: ignore[return-value]
         artifact = state.ingest_cache.get_or_refresh(
             global_ingest_key,
             lambda: ingest_func(
@@ -774,8 +845,7 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
                 "list_version": list_version,
             },
         )
-
-        return V2CreateScreeningResponse(
+        resp = V2CreateScreeningResponse(
             screening_id=screen_key,
             decision=result.decision,
             hits=list(result.hits),
@@ -785,6 +855,14 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
             list_version=list_version,
             evidence_pack_id=evidence_pack_id,
         )
+        _idempotency_store(
+            request=request,
+            principal=principal,
+            scope=scope,
+            request_sha=request_sha,
+            response_obj=resp.model_dump(),
+        )
+        return resp
 
     @app.post(
         "/v2/screenings/{screening_id}/decision",
@@ -867,10 +945,21 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
     )
     def v2_create_webhook_subscription(
         req: V2CreateWebhookSubscriptionRequest,
+        request: Request,
         principal=Depends(principal_from_request),
     ) -> V2WebhookSubscription:
         if "write:screen" not in principal.scopes:
             raise_http_error(status_code=403, code="missing_scope")
+        scope = _idempotency_scope(method="POST", path="/v2/webhooks/subscriptions")
+        request_sha = _idempotency_request_sha(req.model_dump())
+        cached = _idempotency_maybe_return(
+            request=request,
+            principal=principal,
+            scope=scope,
+            request_sha=request_sha,
+        )
+        if cached is not None:
+            return cached  # type: ignore[return-value]
         sub_id = sha256_hex(
             canonical_json_bytes(
                 {"customer_id": principal.customer_id, "url": req.url, "created_at": utc_now_iso()}
@@ -886,9 +975,17 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
             created_at=now,
             active=True,
         )
-        return V2WebhookSubscription(
+        resp = V2WebhookSubscription(
             subscription_id=sub_id, url=req.url, events=req.events, active=True, created_at=now
         )
+        _idempotency_store(
+            request=request,
+            principal=principal,
+            scope=scope,
+            request_sha=request_sha,
+            response_obj=resp.model_dump(),
+        )
+        return resp
 
     @app.get(
         "/v2/webhooks/subscriptions",
@@ -1120,6 +1217,16 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
     ) -> V2CaseDetail:
         if "write:cases" not in principal.scopes:
             raise_http_error(status_code=403, code="missing_scope")
+        scope = _idempotency_scope(method="POST", path="/v2/cases/{case_id}/events")
+        request_sha = _idempotency_request_sha({"case_id": case_id, "body": req.model_dump()})
+        cached = _idempotency_maybe_return(
+            request=request,
+            principal=principal,
+            scope=scope,
+            request_sha=request_sha,
+        )
+        if cached is not None:
+            return cached  # type: ignore[return-value]
         c = state.db.get_case(case_id=case_id)
         if c is None or c["customer_id"] != principal.customer_id:
             raise_http_error(status_code=404, code="case_not_found")
@@ -1173,7 +1280,15 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
                 }
             ),
         )
-        return v2_get_case(case_id, principal)
+        resp = v2_get_case(case_id, principal)
+        _idempotency_store(
+            request=request,
+            principal=principal,
+            scope=scope,
+            request_sha=request_sha,
+            response_obj=resp.model_dump(),
+        )
+        return resp
 
     @app.get(
         "/v2/evidence-packs/{evidence_pack_id}",
