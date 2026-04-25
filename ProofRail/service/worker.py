@@ -130,6 +130,10 @@ def _run_retention_gc(state) -> None:  # noqa: ANN001
 
 def process_once(state, *, do_gc: bool = False) -> None:  # noqa: ANN001
     now = utc_now_iso()
+    try:
+        state.db.release_expired_job_leases(now=now)
+    except Exception:  # noqa: BLE001
+        pass
     demo_mode = os.environ.get("PROOFRAIL_DEMO_MODE", "0") == "1"
     ingest_func = ingest_demo if demo_mode else ingest_sources
     lease_until = (

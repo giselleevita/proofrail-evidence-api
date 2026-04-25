@@ -210,3 +210,19 @@ This report focuses on: auth bypasses, secret management, request validation, ra
 5) **Add schema/size validation** for `/v1/evidence-packs/verify` and enforce body size limits at edge.  
 6) **Optionally derive per-customer signing keys** from a master secret for multi-tenant cryptographic separation.
 
+---
+
+## Reconciliation (enterprise hardening pass, 2026-04)
+
+The following items from this report were **re-verified against current code** and addressed where gaps remained:
+
+| ID | Status | Notes |
+|----|--------|-------|
+| PR-001 | **Mitigated** | `EvidenceStore.get_pack` and `EvidenceStoreS3.get_pack` recompute SHA256 of stored bytes and raise `evidence_pack_integrity_failed` on mismatch. |
+| PR-002 | **Mitigated** | Per-IP **pre-auth** rate limit (`preauth_limiter`, `PROOFRAIL_PREAUTH_RPM`) runs **before** `resolve_api_key` when `x-api-key` is present, throttling invalid-key probing without requiring a successful key lookup first. |
+| PR-003 | **Mitigated** | `RateLimiter` uses an LRU-ordered bucket map with configurable cap (`PROOFRAIL_RATELIMIT_MAX_BUCKETS`, default 50000). |
+| PR-004 | **Mitigated** | Admin auth uses `hmac.compare_digest` in `middleware.require_admin_factory`. |
+| PR-005 | **Mitigated** | `VerifyEvidencePackRequest` caps canonical JSON size (512 KiB) and signature length; `Content-Length` guard remains in middleware. |
+| PR-006 | **Open / by design** | Global signing secret unless deployment uses per-tenant secrets via env rotation; v2 bundle signing uses keyed map when configured. |
+| PR-007 | **Observation** | No change; retain redaction guardrails for future logging. |
+

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -9,6 +11,8 @@ from typing import Any
 @dataclass(frozen=True)
 class DbPgConfig:
     url: str
+    pool_min_size: int = 1
+    pool_max_size: int = 20
 
 
 SCHEMA_SQL = """
@@ -170,18 +174,50 @@ class ProofRailDbPg:
 
     def __init__(self, cfg: DbPgConfig) -> None:
         self.cfg = cfg
-        self._init()
+        self._pool: Any = None
+        self._init_schema()
+        self._open_pool()
 
-    def _connect(self):  # noqa: ANN001
+    def _migration_connect(self):  # noqa: ANN001
         import psycopg
 
         return psycopg.connect(self.cfg.url, autocommit=True)
 
-    def _init(self) -> None:
+    @contextmanager
+    def _connect(self):  # noqa: ANN001
+        if self._pool is None:
+            raise RuntimeError("ProofRailDbPg pool not initialized")
+        with self._pool.connection() as con:
+            yield con
+
+    def _open_pool(self) -> None:
+        from psycopg_pool import ConnectionPool
+
+        ps_min = max(1, int(self.cfg.pool_min_size))
+        ps_max = max(ps_min, int(self.cfg.pool_max_size))
+        self._pool = ConnectionPool(
+            conninfo=self.cfg.url,
+            min_size=ps_min,
+            max_size=ps_max,
+            kwargs={"autocommit": True},
+        )
+
+    def close(self) -> None:
+        if self._pool is not None:
+            self._pool.close()
+            self._pool = None
+
+    def ping_ms(self) -> float:
+        t0 = time.perf_counter()
+        with self._connect() as con:
+            con.execute("SELECT 1").fetchone()
+        return (time.perf_counter() - t0) * 1000.0
+
+    def _init_schema(self) -> None:
         # Guard against concurrent init (API + worker can start together).
         # Even with IF NOT EXISTS, Postgres can error under races for the
         # implicit composite types created alongside tables.
-        with self._connect() as con:
+        with self._migration_connect() as con:
             con.execute("SELECT pg_advisory_lock(741_224_001)")
             try:
                 stmts = [s.strip() for s in SCHEMA_SQL.split(";") if s.strip()]
@@ -782,13 +818,43 @@ class ProofRailDbPg:
         except Exception:  # noqa: BLE001
             return 0
 
-    def list_failed_jobs(self, *, limit: int = 100) -> list[dict[str, Any]]:
+    def count_stale_job_leases(self, *, now: str) -> int:
+        with self._connect() as con:
+            row = con.execute(
+                "SELECT COUNT(*)::INT AS n FROM jobs WHERE status IN ('queued','retry') "
+                "AND locked_until IS NOT NULL AND locked_until < %s",
+                (now,),
+            ).fetchone()
+        return int(row[0]) if row else 0
+
+    def release_expired_job_leases(self, *, now: str) -> int:
+        with self._connect() as con:
+            r = con.execute(
+                "UPDATE jobs SET locked_until=NULL, updated_at=%s "
+                "WHERE status IN ('queued','retry') AND locked_until IS NOT NULL AND locked_until < %s",
+                (now, now),
+            )
+        return int(getattr(r, "rowcount", 0) or 0)
+
+    def list_failed_jobs(
+        self,
+        *,
+        limit: int = 100,
+        cursor_updated_at: str | None = None,
+        cursor_job_id: int | None = None,
+    ) -> list[dict[str, Any]]:
         limit_n = max(1, min(int(limit), 500))
+        where = "status='failed'"
+        params: list[Any] = []
+        if cursor_updated_at is not None and cursor_job_id is not None:
+            where += " AND (updated_at < %s OR (updated_at = %s AND job_id < %s))"
+            params.extend([cursor_updated_at, cursor_updated_at, int(cursor_job_id)])
+        params.append(limit_n)
         with self._connect() as con:
             rows = con.execute(
                 "SELECT job_id, job_type, job_key, status, attempt_count, run_at, last_error, created_at, updated_at "
-                "FROM jobs WHERE status='failed' ORDER BY updated_at DESC LIMIT %s",
-                (limit_n,),
+                f"FROM jobs WHERE {where} ORDER BY updated_at DESC, job_id DESC LIMIT %s",
+                params,
             ).fetchall()
         return [
             {
@@ -911,13 +977,25 @@ class ProofRailDbPg:
             ).fetchall()
         return {str(r[0]): int(r[1]) for r in rows}
 
-    def list_failed_webhook_deliveries(self, *, limit: int = 100) -> list[dict[str, Any]]:
+    def list_failed_webhook_deliveries(
+        self,
+        *,
+        limit: int = 100,
+        cursor_updated_at: str | None = None,
+        cursor_delivery_id: int | None = None,
+    ) -> list[dict[str, Any]]:
         limit_n = max(1, min(500, int(limit)))
+        where = "status='failed'"
+        params: list[Any] = []
+        if cursor_updated_at is not None and cursor_delivery_id is not None:
+            where += " AND (updated_at < %s OR (updated_at = %s AND delivery_id < %s))"
+            params.extend([cursor_updated_at, cursor_updated_at, int(cursor_delivery_id)])
+        params.append(limit_n)
         with self._connect() as con:
             rows = con.execute(
                 "SELECT delivery_id, subscription_id, customer_id, event_type, event_id, status, attempt_count, next_attempt_at, last_attempt_at, last_status_code, last_error, created_at, updated_at "
-                "FROM webhook_deliveries WHERE status='failed' ORDER BY updated_at DESC LIMIT %s",
-                (limit_n,),
+                f"FROM webhook_deliveries WHERE {where} ORDER BY updated_at DESC, delivery_id DESC LIMIT %s",
+                params,
             ).fetchall()
         cols = [
             "delivery_id",

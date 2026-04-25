@@ -75,3 +75,39 @@ class TestV2ReviewDecision(unittest.TestCase):
         body = case.json()
         self.assertEqual(body["case"]["case_id"], screening_id)
         self.assertTrue(len(body["events"]) >= 2)
+
+    def test_review_decision_idempotency(self) -> None:
+        r = self.client.post(
+            "/v1/admin/keys",
+            headers={"x-admin-key": "dev-admin"},
+            json={"customer_id": "c2", "scopes": ["write:screen", "read:evidence"]},
+        )
+        self.assertEqual(r.status_code, 200)
+        api_key = r.json()["api_key"]
+
+        s = self.client.post(
+            "/v2/screenings",
+            headers={"x-api-key": api_key},
+            json={"screening_type": "onboarding", "subject": {"name": "Jane Roe"}},
+        )
+        self.assertEqual(s.status_code, 200)
+        screening_id = s.json()["screening_id"]
+
+        headers = {
+            "x-api-key": api_key,
+            "Idempotency-Key": "idem-review-1",
+        }
+        body = {"outcome": "approve", "note": "once"}
+        d1 = self.client.post(
+            f"/v2/screenings/{screening_id}/decision",
+            headers=headers,
+            json=body,
+        )
+        self.assertEqual(d1.status_code, 200)
+        d2 = self.client.post(
+            f"/v2/screenings/{screening_id}/decision",
+            headers=headers,
+            json=body,
+        )
+        self.assertEqual(d2.status_code, 200)
+        self.assertEqual(d1.json(), d2.json())

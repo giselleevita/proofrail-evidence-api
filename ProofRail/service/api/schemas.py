@@ -96,9 +96,21 @@ class EvidencePackSignatureResponse(BaseModel):
     signature: str
 
 
+_VERIFY_EVIDENCE_PACK_MAX_CANONICAL_BYTES = 512_000
+
+
 class VerifyEvidencePackRequest(BaseModel):
     evidence_pack: dict[str, Any]
-    signature: str
+    signature: str = Field(min_length=1, max_length=1024)
+
+    @field_validator("evidence_pack")
+    @classmethod
+    def _evidence_pack_size(cls, v: dict[str, Any]) -> dict[str, Any]:
+        from ProofRail.service.storage import canonical_json_bytes
+
+        if len(canonical_json_bytes(v)) > _VERIFY_EVIDENCE_PACK_MAX_CANONICAL_BYTES:
+            raise ValueError("evidence_pack_too_large")
+        return v
 
 
 class VerifyEvidencePackResponse(BaseModel):
