@@ -17,7 +17,7 @@ With the admin key, fetch JSON metrics and record a timestamped snapshot.
   - High **`locked`** for long periods: possible worker crash during lease window; leases expire after the configured lease duration; verify worker logs.
 - **Webhooks**: `webhooks.deliveries_by_status` for growth in `failed` / `retry`.
 
-If **`PROOFRAIL_PROMETHEUS_METRICS=1`**, scrape **`/metrics`** (no admin key unless **`PROOFRAIL_METRICS_BEARER_TOKEN`** is set — then use `Authorization: Bearer …`). Protect at the edge in production. Metric names align with **`SLO.md`**.
+Scrape **`/metrics`** for Prometheus text (when **`PROOFRAIL_PROMETHEUS_METRICS=1`**, full gauge lines; otherwise the path returns a short `# ... disabled` stub). If **`PROOFRAIL_METRICS_BEARER_TOKEN`** is set, use `Authorization: Bearer …`. Protect at the edge in production. Metric names align with **`SLO.md`**.
 
 ## 3. DLQ and failed work
 

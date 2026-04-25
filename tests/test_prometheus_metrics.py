@@ -15,6 +15,12 @@ class TestPrometheusMetrics(unittest.TestCase):
         for k in ("PROOFRAIL_PROMETHEUS_METRICS", "PROOFRAIL_METRICS_BEARER_TOKEN"):
             os.environ.pop(k, None)
 
+    def test_metrics_stub_when_disabled(self) -> None:
+        client = TestClient(create_app())
+        r = client.get("/metrics")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("disabled", r.text)
+
     def test_metrics_available_when_enabled(self) -> None:
         os.environ["PROOFRAIL_PROMETHEUS_METRICS"] = "1"
         client = TestClient(create_app())
