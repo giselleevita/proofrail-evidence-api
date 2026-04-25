@@ -70,3 +70,27 @@ class TestV2Cases(unittest.TestCase):
         )
         self.assertEqual(q.status_code, 200)
         self.assertTrue(any(item["case_id"] == case_id for item in q.json()))
+
+    def test_list_cases_pagination_header(self) -> None:
+        r = self.client.post(
+            "/v1/admin/keys",
+            headers={"x-admin-key": "dev-admin"},
+            json={"customer_id": "c1", "scopes": ["write:screen", "read:evidence", "write:cases"]},
+        )
+        api_key = r.json()["api_key"]
+        for name in ("A", "B", "C"):
+            self.client.post(
+                "/v2/screenings",
+                headers={"x-api-key": api_key},
+                json={"screening_type": "onboarding", "subject": {"name": name}},
+            )
+        resp = self.client.get("/v2/cases?limit=2", headers={"x-api-key": api_key})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.json()), 2)
+        cursor = resp.headers.get("x-next-cursor")
+        self.assertTrue(cursor)
+        resp2 = self.client.get(
+            f"/v2/cases?limit=2&cursor={cursor}",
+            headers={"x-api-key": api_key},
+        )
+        self.assertEqual(resp2.status_code, 200)

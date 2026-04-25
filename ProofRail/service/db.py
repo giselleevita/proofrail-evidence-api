@@ -403,32 +403,96 @@ class ProofRailDb:
         status: str | None,
         assignee: str | None = None,
         limit: int,
+        cursor_updated_at: str | None = None,
+        cursor_case_id: str | None = None,
     ) -> list[dict[str, str]]:
         limit_n = max(1, min(200, int(limit)))
         with self._connect() as con:
             if status and assignee:
                 rows = con.execute(
                     "SELECT case_id, created_at, updated_at, customer_id, screening_id, evidence_pack_id, status, assignee "
-                    "FROM cases WHERE customer_id = ? AND status = ? AND assignee = ? ORDER BY updated_at DESC LIMIT ?",
-                    (customer_id, status, assignee, limit_n),
+                    "FROM cases WHERE customer_id = ? AND status = ? AND assignee = ? "
+                    + (
+                        "AND (updated_at < ? OR (updated_at = ? AND case_id < ?)) "
+                        if cursor_updated_at and cursor_case_id
+                        else ""
+                    )
+                    + "ORDER BY updated_at DESC, case_id DESC LIMIT ?",
+                    (
+                        (
+                            customer_id,
+                            status,
+                            assignee,
+                            cursor_updated_at,
+                            cursor_updated_at,
+                            cursor_case_id,
+                            limit_n,
+                        )
+                        if cursor_updated_at and cursor_case_id
+                        else (customer_id, status, assignee, limit_n)
+                    ),
                 ).fetchall()
             elif status:
                 rows = con.execute(
                     "SELECT case_id, created_at, updated_at, customer_id, screening_id, evidence_pack_id, status, assignee "
-                    "FROM cases WHERE customer_id = ? AND status = ? ORDER BY updated_at DESC LIMIT ?",
-                    (customer_id, status, limit_n),
+                    "FROM cases WHERE customer_id = ? AND status = ? "
+                    + (
+                        "AND (updated_at < ? OR (updated_at = ? AND case_id < ?)) "
+                        if cursor_updated_at and cursor_case_id
+                        else ""
+                    )
+                    + "ORDER BY updated_at DESC, case_id DESC LIMIT ?",
+                    (
+                        (
+                            customer_id,
+                            status,
+                            cursor_updated_at,
+                            cursor_updated_at,
+                            cursor_case_id,
+                            limit_n,
+                        )
+                        if cursor_updated_at and cursor_case_id
+                        else (customer_id, status, limit_n)
+                    ),
                 ).fetchall()
             elif assignee:
                 rows = con.execute(
                     "SELECT case_id, created_at, updated_at, customer_id, screening_id, evidence_pack_id, status, assignee "
-                    "FROM cases WHERE customer_id = ? AND assignee = ? ORDER BY updated_at DESC LIMIT ?",
-                    (customer_id, assignee, limit_n),
+                    "FROM cases WHERE customer_id = ? AND assignee = ? "
+                    + (
+                        "AND (updated_at < ? OR (updated_at = ? AND case_id < ?)) "
+                        if cursor_updated_at and cursor_case_id
+                        else ""
+                    )
+                    + "ORDER BY updated_at DESC, case_id DESC LIMIT ?",
+                    (
+                        (
+                            customer_id,
+                            assignee,
+                            cursor_updated_at,
+                            cursor_updated_at,
+                            cursor_case_id,
+                            limit_n,
+                        )
+                        if cursor_updated_at and cursor_case_id
+                        else (customer_id, assignee, limit_n)
+                    ),
                 ).fetchall()
             else:
                 rows = con.execute(
                     "SELECT case_id, created_at, updated_at, customer_id, screening_id, evidence_pack_id, status, assignee "
-                    "FROM cases WHERE customer_id = ? ORDER BY updated_at DESC LIMIT ?",
-                    (customer_id, limit_n),
+                    "FROM cases WHERE customer_id = ? "
+                    + (
+                        "AND (updated_at < ? OR (updated_at = ? AND case_id < ?)) "
+                        if cursor_updated_at and cursor_case_id
+                        else ""
+                    )
+                    + "ORDER BY updated_at DESC, case_id DESC LIMIT ?",
+                    (
+                        (customer_id, cursor_updated_at, cursor_updated_at, cursor_case_id, limit_n)
+                        if cursor_updated_at and cursor_case_id
+                        else (customer_id, limit_n)
+                    ),
                 ).fetchall()
         return [
             {
@@ -504,12 +568,36 @@ class ProofRailDb:
                 ),
             )
 
-    def list_webhook_subscriptions(self, *, customer_id: str) -> list[dict[str, Any]]:
+    def list_webhook_subscriptions(
+        self,
+        *,
+        customer_id: str,
+        limit: int = 200,
+        cursor_created_at: str | None = None,
+        cursor_subscription_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        limit_n = max(1, min(500, int(limit)))
         with self._connect() as con:
             rows = con.execute(
                 "SELECT subscription_id, customer_id, url, secret, events, active, created_at "
-                "FROM webhook_subscriptions WHERE customer_id = ? ORDER BY created_at DESC",
-                (customer_id,),
+                "FROM webhook_subscriptions WHERE customer_id = ? "
+                + (
+                    "AND (created_at < ? OR (created_at = ? AND subscription_id < ?)) "
+                    if cursor_created_at and cursor_subscription_id
+                    else ""
+                )
+                + "ORDER BY created_at DESC, subscription_id DESC LIMIT ?",
+                (
+                    (
+                        customer_id,
+                        cursor_created_at,
+                        cursor_created_at,
+                        cursor_subscription_id,
+                        limit_n,
+                    )
+                    if cursor_created_at and cursor_subscription_id
+                    else (customer_id, limit_n)
+                ),
             ).fetchall()
         out: list[dict[str, Any]] = []
         for r in rows:

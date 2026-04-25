@@ -427,6 +427,8 @@ class ProofRailDbPg:
         status: str | None,
         assignee: str | None = None,
         limit: int,
+        cursor_updated_at: str | None = None,
+        cursor_case_id: str | None = None,
     ) -> list[dict[str, str]]:
         limit_n = max(1, min(200, int(limit)))
         q = (
@@ -440,7 +442,10 @@ class ProofRailDbPg:
         if assignee is not None:
             q += " AND assignee=%s"
             args.append(assignee)
-        q += " ORDER BY updated_at DESC LIMIT %s"
+        if cursor_updated_at is not None and cursor_case_id is not None:
+            q += " AND (updated_at < %s OR (updated_at = %s AND case_id < %s))"
+            args.extend([cursor_updated_at, cursor_updated_at, cursor_case_id])
+        q += " ORDER BY updated_at DESC, case_id DESC LIMIT %s"
         args.append(limit_n)
         with self._connect() as con:
             rows = con.execute(q, tuple(args)).fetchall()
@@ -518,13 +523,27 @@ class ProofRailDbPg:
                 ),
             )
 
-    def list_webhook_subscriptions(self, *, customer_id: str) -> list[dict[str, Any]]:
+    def list_webhook_subscriptions(
+        self,
+        *,
+        customer_id: str,
+        limit: int = 200,
+        cursor_created_at: str | None = None,
+        cursor_subscription_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        limit_n = max(1, min(500, int(limit)))
+        q = (
+            "SELECT subscription_id, customer_id, url, secret, events, active, created_at "
+            "FROM webhook_subscriptions WHERE customer_id=%s"
+        )
+        args: list[Any] = [customer_id]
+        if cursor_created_at is not None and cursor_subscription_id is not None:
+            q += " AND (created_at < %s OR (created_at = %s AND subscription_id < %s))"
+            args.extend([cursor_created_at, cursor_created_at, cursor_subscription_id])
+        q += " ORDER BY created_at DESC, subscription_id DESC LIMIT %s"
+        args.append(limit_n)
         with self._connect() as con:
-            rows = con.execute(
-                "SELECT subscription_id, customer_id, url, secret, events, active, created_at "
-                "FROM webhook_subscriptions WHERE customer_id=%s ORDER BY created_at DESC",
-                (customer_id,),
-            ).fetchall()
+            rows = con.execute(q, tuple(args)).fetchall()
         out: list[dict[str, Any]] = []
         for r in rows:
             out.append(
