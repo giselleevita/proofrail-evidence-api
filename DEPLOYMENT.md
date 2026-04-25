@@ -30,7 +30,7 @@ Optional:
 - `PROOFRAIL_PREAUTH_RPM="60"` (per-IP cap **before** DB key resolution when `x-api-key` is present)
 - `PROOFRAIL_RATELIMIT_MAX_BUCKETS="50000"` (in-memory rate limiter LRU cap; set `0` or `none` for unbounded — not recommended)
 - `PROOFRAIL_DB_POOL_MIN="1"` / `PROOFRAIL_DB_POOL_MAX="20"` (Postgres connection pool sizes)
-- `PROOFRAIL_PROMETHEUS_METRICS="1"` — exposes plaintext **`/metrics`**
+- `PROOFRAIL_PROMETHEUS_METRICS="1"` — turns on Prometheus **gauge lines** on **`/metrics`** (the path always exists; when disabled it returns a short `# ... disabled` text stub)
 - `PROOFRAIL_METRICS_BEARER_TOKEN` — if set, **`/metrics`** requires `Authorization: Bearer <token>` (use in production instead of leaving the endpoint open)
 - **Docker Compose**: the default `proofrail` service and **`proofrail_pilot_api`** set `PROOFRAIL_PROMETHEUS_METRICS=1` so local smoke checks work; pilot API/worker also set explicit **`PROOFRAIL_DB_POOL_*`** when using Postgres
 - `PROOFRAIL_JOBS_RETENTION_DAYS="7"` (worker deletes old `done`/`failed` jobs)

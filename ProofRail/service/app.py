@@ -1463,65 +1463,71 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
         }
         return Response(content=pdf_bytes, media_type="application/pdf", headers=headers)
 
-    if state.cfg.enable_prometheus_metrics:
-
-        @app.get("/metrics")
-        def prometheus_metrics(request: Request) -> Response:
-            tok = state.cfg.metrics_bearer_token
-            if tok:
-                auth = request.headers.get("authorization") or ""
-                if not auth.lower().startswith("bearer "):
-                    return Response(
-                        status_code=401,
-                        content="# unauthorized\n",
-                        media_type="text/plain; version=0.0.4; charset=utf-8",
-                    )
-                got = auth[7:].strip()
-                if not hmac.compare_digest(got, tok):
-                    return Response(
-                        status_code=401,
-                        content="# unauthorized\n",
-                        media_type="text/plain; version=0.0.4; charset=utf-8",
-                    )
-            lines: list[str] = []
-            lines.append("# HELP proofrail_info ProofRail API process (static label).")
-            lines.append("# TYPE proofrail_info gauge")
-            lines.append('proofrail_info{version="0.1.0"} 1')
-            try:
-                qd = int(state.usage_queue.qsize())
-            except Exception:
-                qd = 0
-            lines.append(
-                "# HELP proofrail_usage_queue_depth In-memory usage event flush queue depth."
+    @app.get("/metrics")
+    def prometheus_metrics(request: Request) -> Response:
+        # Always register this route so browsers do not get a blank 404 when
+        # operators expect Prometheus exposition at /metrics.
+        if not state.cfg.enable_prometheus_metrics:
+            return Response(
+                content=(
+                    "# ProofRail Prometheus metrics are disabled.\n"
+                    "# Set PROOFRAIL_PROMETHEUS_METRICS=1 (true/yes) and restart the process.\n"
+                ),
+                media_type="text/plain; charset=utf-8",
             )
-            lines.append("# TYPE proofrail_usage_queue_depth gauge")
-            lines.append(f"proofrail_usage_queue_depth {qd}")
-            try:
-                db_ms = float(state.db.ping_ms())
-            except Exception:
-                db_ms = -1.0
-            lines.append("# HELP proofrail_db_ping_ms Last DB round-trip sample in milliseconds.")
-            lines.append("# TYPE proofrail_db_ping_ms gauge")
-            lines.append(f"proofrail_db_ping_ms {db_ms:.6f}")
-            now = utc_now_iso()
-            try:
-                stale = int(state.db.count_stale_job_leases(now=now))
-            except Exception:
-                stale = 0
-            lines.append(
-                "# HELP proofrail_jobs_stale_leases Non-terminal jobs whose lease timestamp is in the past."
-            )
-            lines.append("# TYPE proofrail_jobs_stale_leases gauge")
-            lines.append(f"proofrail_jobs_stale_leases {stale}")
-            try:
-                locked = int(state.db.job_locked_count(now=now))
-            except Exception:
-                locked = 0
-            lines.append("# HELP proofrail_jobs_locked Active job leases (locked_until > now).")
-            lines.append("# TYPE proofrail_jobs_locked gauge")
-            lines.append(f"proofrail_jobs_locked {locked}")
-            body = "\n".join(lines) + "\n"
-            return Response(content=body, media_type="text/plain; version=0.0.4; charset=utf-8")
+        tok = state.cfg.metrics_bearer_token
+        if tok:
+            auth = request.headers.get("authorization") or ""
+            if not auth.lower().startswith("bearer "):
+                return Response(
+                    status_code=401,
+                    content="# unauthorized\n",
+                    media_type="text/plain; version=0.0.4; charset=utf-8",
+                )
+            got = auth[7:].strip()
+            if not hmac.compare_digest(got, tok):
+                return Response(
+                    status_code=401,
+                    content="# unauthorized\n",
+                    media_type="text/plain; version=0.0.4; charset=utf-8",
+                )
+        lines: list[str] = []
+        lines.append("# HELP proofrail_info ProofRail API process (static label).")
+        lines.append("# TYPE proofrail_info gauge")
+        lines.append('proofrail_info{version="0.1.0"} 1')
+        try:
+            qd = int(state.usage_queue.qsize())
+        except Exception:
+            qd = 0
+        lines.append("# HELP proofrail_usage_queue_depth In-memory usage event flush queue depth.")
+        lines.append("# TYPE proofrail_usage_queue_depth gauge")
+        lines.append(f"proofrail_usage_queue_depth {qd}")
+        try:
+            db_ms = float(state.db.ping_ms())
+        except Exception:
+            db_ms = -1.0
+        lines.append("# HELP proofrail_db_ping_ms Last DB round-trip sample in milliseconds.")
+        lines.append("# TYPE proofrail_db_ping_ms gauge")
+        lines.append(f"proofrail_db_ping_ms {db_ms:.6f}")
+        now = utc_now_iso()
+        try:
+            stale = int(state.db.count_stale_job_leases(now=now))
+        except Exception:
+            stale = 0
+        lines.append(
+            "# HELP proofrail_jobs_stale_leases Non-terminal jobs whose lease timestamp is in the past."
+        )
+        lines.append("# TYPE proofrail_jobs_stale_leases gauge")
+        lines.append(f"proofrail_jobs_stale_leases {stale}")
+        try:
+            locked = int(state.db.job_locked_count(now=now))
+        except Exception:
+            locked = 0
+        lines.append("# HELP proofrail_jobs_locked Active job leases (locked_until > now).")
+        lines.append("# TYPE proofrail_jobs_locked gauge")
+        lines.append(f"proofrail_jobs_locked {locked}")
+        body = "\n".join(lines) + "\n"
+        return Response(content=body, media_type="text/plain; version=0.0.4; charset=utf-8")
 
     return app
 
