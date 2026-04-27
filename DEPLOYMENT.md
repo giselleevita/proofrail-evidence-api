@@ -45,7 +45,7 @@ Run the pilot-parity profile:
 docker compose --profile pilot up -d --build
 ```
 
-- API: `http://127.0.0.1:8001/docs`
+- API: `http://127.0.0.1:8001/docs` (analyst console: `http://127.0.0.1:8001/console/`)
 - Postgres (host): `localhost:5433` (container is still `postgres:5432`)
 - MinIO S3 (host): `http://127.0.0.1:9000`
 - MinIO console: `http://127.0.0.1:9001` (default credentials in `docker-compose.yml`)
@@ -85,6 +85,7 @@ curl -sS http://127.0.0.1:8001/v1/admin/metrics -H 'x-admin-key: change-me'
 
 ## Notes
 
+- The bundled **analyst console** is served at **`/console/`** (static files, no extra build step). If your API hostname is public, restrict **`/console`** the same way you would **`/docs`** (IP allow list, VPN, edge auth, or omit exposing that path).
 - The default `docker compose up` still runs the SQLite + filesystem demo stack on port `8000`.
 - For pilots, use the Postgres + S3 stack (`--profile pilot`) so you don’t have to migrate data later.
 - For safe retries of write requests, send an `Idempotency-Key` header on `POST /v2/screenings`, `POST /v2/cases/{case_id}/events`, and `POST /v2/webhooks/subscriptions`.

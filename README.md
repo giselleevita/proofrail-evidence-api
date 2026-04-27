@@ -29,9 +29,12 @@ Most screening APIs return only a decision. ProofRail also returns the **portabl
 
 ### UI (today)
 
-There is no separate web dashboard yet. The interactive UI is Swagger:
+There is no full product dashboard yet. For day-to-day exploration you can use:
 
-- `http://127.0.0.1:8000/docs`
+- **Swagger**: `http://127.0.0.1:8000/docs`
+- **Analyst console** (static pilot UI, same-origin; stores the API key only in `sessionStorage`): `http://127.0.0.1:8000/console/`
+
+Treat `/console` like `/docs`: convenient for pilots, but protect or disable it at the edge if the API is exposed to untrusted networks.
 
 ### Investor demo (recommended)
 
