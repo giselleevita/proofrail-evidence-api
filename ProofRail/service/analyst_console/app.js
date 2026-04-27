@@ -533,6 +533,7 @@
   $("viewCases").hidden = false;
   updateAuthUi();
   if (sessionStorage.getItem(STORAGE_KEY)) loadCases(true);
+  else loadCases(true);
 
   $("apiKey").addEventListener("input", function () {
     updateAuthUi();
