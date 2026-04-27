@@ -4,9 +4,11 @@ import hmac
 import json
 import os
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, Request, Response
+from starlette.staticfiles import StaticFiles
 
 from ProofRail.service.api.schemas import (
     ERROR_RESPONSES,
@@ -1528,6 +1530,14 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
         lines.append(f"proofrail_jobs_locked {locked}")
         body = "\n".join(lines) + "\n"
         return Response(content=body, media_type="text/plain; version=0.0.4; charset=utf-8")
+
+    _analyst_console_dir = Path(__file__).resolve().parent / "analyst_console"
+    if _analyst_console_dir.is_dir():
+        app.mount(
+            "/console",
+            StaticFiles(directory=str(_analyst_console_dir), html=True),
+            name="analyst_console",
+        )
 
     return app
 

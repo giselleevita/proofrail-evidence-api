@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ProofRail analyst console</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="top">
+      <div>
+        <h1>ProofRail analyst console</h1>
+        <p class="muted">
+          Pilot static UI (same-origin). API keys are kept only in this browser tab’s
+          <code>sessionStorage</code>. For production, prefer SSO or a server-side proxy; do not expose this
+          console publicly without edge controls.
+        </p>
+      </div>
+    </header>
+
+    <section class="panel" id="settings">
+      <h2>Connection</h2>
+      <div class="grid">
+        <label>
+          API base URL
+          <input type="url" id="baseUrl" placeholder="https://api.example.com" autocomplete="off" />
+        </label>
+        <label>
+          API key (<code>x-api-key</code>)
+          <input type="password" id="apiKey" placeholder="pr_…" autocomplete="off" />
+        </label>
+      </div>
+      <p class="muted small">
+        Defaults to this host’s origin. Save loads the cases list. Clearing the API key removes it from
+        storage.
+      </p>
+      <div class="row">
+        <button type="button" id="btnSave">Save &amp; load cases</button>
+        <button type="button" id="btnClearKey" class="secondary">Clear API key</button>
+      </div>
+      <p id="settingsError" class="error" hidden></p>
+    </section>
+
+    <nav class="tabs" id="mainNav" hidden>
+      <button type="button" data-view="cases" class="active">Cases</button>
+      <button type="button" data-view="detail" id="tabDetail" disabled>Case detail</button>
+    </nav>
+
+    <section class="panel" id="viewCases" hidden>
+      <h2>Cases</h2>
+      <div class="row filters">
+        <label>
+          Status
+          <select id="filterStatus">
+            <option value="">(any)</option>
+            <option value="needs_review">needs_review</option>
+            <option value="closed">closed</option>
+          </select>
+        </label>
+        <label>
+          Assignee
+          <input type="text" id="filterAssignee" placeholder="optional" />
+        </label>
+        <button type="button" id="btnRefreshCases">Refresh</button>
+      </div>
+      <p id="casesError" class="error" hidden></p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Case</th>
+              <th>Status</th>
+              <th>Decision</th>
+              <th>Subject</th>
+              <th>Updated</th>
+            </tr>
+          </thead>
+          <tbody id="casesBody"></tbody>
+        </table>
+      </div>
+      <div class="row">
+        <button type="button" id="btnLoadMore" class="secondary" hidden>Load more</button>
+        <span class="muted small" id="casesCursorHint" hidden></span>
+      </div>
+    </section>
+
+    <section class="panel" id="viewDetail" hidden>
+      <p class="row">
+        <button type="button" id="btnBackCases" class="secondary">← Back to list</button>
+      </p>
+      <h2 id="detailTitle">Case</h2>
+      <p id="detailError" class="error" hidden></p>
+      <div id="detailSummary" class="detail-summary"></div>
+      <div class="row">
+        <button type="button" id="btnExportJson">Download evidence JSON</button>
+      </div>
+
+      <h3>Review decision</h3>
+      <p class="muted small">
+        <code>POST /v2/screenings/{screening_id}/decision</code> with a fresh
+        <code>Idempotency-Key</code> per attempt.
+      </p>
+      <div class="grid">
+        <label>
+          Outcome
+          <select id="decisionOutcome">
+            <option value="approve">approve</option>
+            <option value="reject">reject</option>
+          </select>
+        </label>
+        <label class="span-2">
+          Note (optional)
+          <input type="text" id="decisionNote" maxlength="4000" />
+        </label>
+      </div>
+      <button type="button" id="btnSubmitDecision">Submit decision</button>
+      <p id="decisionError" class="error" hidden></p>
+      <p id="decisionMessage" class="message" hidden></p>
+
+      <h3>Add timeline note</h3>
+      <p class="muted small">Optional: <code>POST /v2/cases/{case_id}/events</code> as <code>comment</code>.</p>
+      <div class="grid">
+        <label class="span-2">
+          Note
+          <textarea id="eventNote" rows="3" maxlength="4000"></textarea>
+        </label>
+      </div>
+      <button type="button" id="btnAddComment" class="secondary">Add comment event</button>
+      <p id="eventError" class="error" hidden></p>
+      <p id="eventMessage" class="message" hidden></p>
+
+      <h3>Timeline</h3>
+      <ul id="eventsList" class="events"></ul>
+    </section>
+
+    <script src="app.js"></script>
+  </body>
+</html>
