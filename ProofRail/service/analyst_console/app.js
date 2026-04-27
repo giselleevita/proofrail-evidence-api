@@ -43,6 +43,28 @@
     }
   }
 
+  function hasApiKey() {
+    return Boolean($("apiKey").value && $("apiKey").value.trim());
+  }
+
+  function setRequiresKeyDisabled(disabled) {
+    $("btnRefreshCases").disabled = disabled;
+    $("btnLoadMore").disabled = disabled;
+    $("btnExportJson").disabled = disabled;
+    $("btnSubmitDecision").disabled = disabled;
+    $("btnAddComment").disabled = disabled;
+  }
+
+  function updateAuthUi() {
+    var ok = hasApiKey();
+    setRequiresKeyDisabled(!ok);
+    if (!ok) {
+      showErr($("casesError"), "Enter an API key to load cases.");
+    } else {
+      showErr($("casesError"), "");
+    }
+  }
+
   var casesCursor = null;
   var currentCaseId = null;
   var currentDetail = null;
@@ -344,9 +366,8 @@
       showErr($("settingsError"), "");
       try {
         saveSettings();
-        $("mainNav").hidden = false;
-        $("viewCases").hidden = false;
-        loadCases(true);
+        updateAuthUi();
+        if (hasApiKey()) loadCases(true);
       } catch (e) {
         showErr($("settingsError"), e.message || String(e));
       }
@@ -355,6 +376,7 @@
     $("btnClearKey").addEventListener("click", function () {
       $("apiKey").value = "";
       sessionStorage.removeItem(STORAGE_KEY);
+      updateAuthUi();
     });
 
     $("btnRefreshCases").addEventListener("click", function () {
@@ -384,9 +406,12 @@
   loadSettings();
   wire();
 
-  if (sessionStorage.getItem(STORAGE_KEY)) {
-    $("mainNav").hidden = false;
-    $("viewCases").hidden = false;
-    loadCases(true);
-  }
+  $("mainNav").hidden = false;
+  $("viewCases").hidden = false;
+  updateAuthUi();
+  if (sessionStorage.getItem(STORAGE_KEY)) loadCases(true);
+
+  $("apiKey").addEventListener("input", function () {
+    updateAuthUi();
+  });
 })();
