@@ -57,12 +57,67 @@
 
   function updateAuthUi() {
     var ok = hasApiKey();
-    setRequiresKeyDisabled(!ok);
-    if (!ok) {
-      showErr($("casesError"), "Enter an API key to load cases.");
-    } else {
-      showErr($("casesError"), "");
-    }
+    // In demo mode (no key), keep the UI usable with placeholder data.
+    // When a key is provided, switch to live API calls.
+    setRequiresKeyDisabled(false);
+    showErr(
+      $("casesError"),
+      ok
+        ? ""
+        : "Demo mode (no API key): showing placeholder cases. Paste an API key to load live data.",
+    );
+  }
+
+  function demoCases() {
+    var now = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+    return [
+      {
+        case_id: "demo_case_001",
+        created_at: now,
+        updated_at: now,
+        status: "needs_review",
+        assignee: "analyst-1",
+        screening_id: "demo_screening_001",
+        evidence_pack_id: "demo_pack_001",
+        subject_name: "Alice Example",
+        decision: "review",
+      },
+      {
+        case_id: "demo_case_002",
+        created_at: now,
+        updated_at: now,
+        status: "closed",
+        assignee: null,
+        screening_id: "demo_screening_002",
+        evidence_pack_id: "demo_pack_002",
+        subject_name: "Bob Example",
+        decision: "allow",
+      },
+    ];
+  }
+
+  function demoCaseDetail(caseId) {
+    var rows = demoCases();
+    var c = rows.filter(function (x) {
+      return x.case_id === caseId;
+    })[0] || rows[0];
+    var now = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+    return {
+      case: c,
+      events: [
+        { ts: now, actor: "system", event_type: "screening_created", note: "placeholder event" },
+        { ts: now, actor: "customer", event_type: "comment", note: "try pasting an API key to go live" },
+      ],
+    };
+  }
+
+  function downloadJsonBlob(obj, filename) {
+    var blob = new Blob([JSON.stringify(obj, null, 2)], { type: "application/json" });
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
   }
 
   var casesCursor = null;
@@ -163,6 +218,13 @@
   }
 
   function loadCases(reset) {
+    if (!hasApiKey()) {
+      casesCursor = null;
+      $("btnLoadMore").hidden = true;
+      $("casesCursorHint").hidden = true;
+      renderCases(demoCases());
+      return;
+    }
     fetchCases(!reset)
       .then(function (data) {
         if (reset) renderCases(data);
@@ -219,6 +281,44 @@
     showErr($("eventMessage"), "");
     $("detailTitle").textContent = "Case " + caseId;
     setView("detail");
+    if (!hasApiKey()) {
+      var body = demoCaseDetail(caseId);
+      currentDetail = body;
+      var c = body.case;
+      $("detailSummary").innerHTML =
+        "<dl>" +
+        "<dt>Status</dt><dd>" +
+        escapeHtml(c.status) +
+        "</dd>" +
+        "<dt>Screening</dt><dd><code>" +
+        escapeHtml(c.screening_id) +
+        "</code></dd>" +
+        "<dt>Evidence pack</dt><dd><code>" +
+        escapeHtml(c.evidence_pack_id) +
+        "</code></dd>" +
+        "<dt>Assignee</dt><dd>" +
+        escapeHtml(c.assignee || "—") +
+        "</dd>" +
+        "<dt>Automated decision</dt><dd>" +
+        escapeHtml(c.decision || "—") +
+        "</dd>" +
+        "</dl>";
+      var ul = $("eventsList");
+      ul.innerHTML = "";
+      (body.events || []).forEach(function (ev) {
+        var li = document.createElement("li");
+        li.innerHTML =
+          "<strong>" +
+          escapeHtml(ev.ts) +
+          "</strong> · " +
+          escapeHtml(ev.event_type) +
+          " · " +
+          escapeHtml(ev.actor) +
+          (ev.note ? "<br/>" + escapeHtml(ev.note) : "");
+        ul.appendChild(li);
+      });
+      return;
+    }
     apiFetch("/v2/cases/" + encodeURIComponent(caseId), { method: "GET" })
       .then(function (r) {
         if (!r.ok) return r.text().then(function (t) {
@@ -269,6 +369,17 @@
 
   function downloadEvidenceJson() {
     if (!currentDetail || !currentDetail.case) return;
+    if (!hasApiKey()) {
+      downloadJsonBlob(
+        {
+          demo: true,
+          evidence_pack_id: currentDetail.case.evidence_pack_id,
+          note: "Paste an API key to export real evidence JSON.",
+        },
+        "evidence-pack-demo.json",
+      );
+      return;
+    }
     var packId = currentDetail.case.evidence_pack_id;
     var path =
       "/v2/evidence-packs/" +
@@ -295,6 +406,12 @@
 
   function submitDecision() {
     if (!currentDetail || !currentDetail.case) return;
+    if (!hasApiKey()) {
+      $("decisionMessage").textContent =
+        "Demo mode: not submitting. Paste an API key to record a decision.";
+      $("decisionMessage").hidden = false;
+      return;
+    }
     var screeningId = currentDetail.case.screening_id;
     var outcome = $("decisionOutcome").value;
     var note = $("decisionNote").value.trim() || null;
@@ -331,6 +448,12 @@
     var note = $("eventNote").value.trim();
     if (!note) {
       showErr($("eventError"), "Enter a note.");
+      return;
+    }
+    if (!hasApiKey()) {
+      $("eventMessage").textContent =
+        "Demo mode: not submitting. Paste an API key to write events.";
+      $("eventMessage").hidden = false;
       return;
     }
     showErr($("eventError"), "");
