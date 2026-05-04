@@ -1,0 +1,44 @@
+services:
+  - type: web
+    name: proofrail-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: PROOFRAIL_ADMIN_KEY
+        sync: false
+      - key: PROOFRAIL_SIGNING_KEYS
+        sync: false
+      - key: PROOFRAIL_SIGNING_KEY_CURRENT
+        value: k1
+      - key: PROOFRAIL_DB_URL
+        fromDatabase:
+          name: proofrail-db
+          property: connectionString
+      - key: PROOFRAIL_DB_POOL_MIN
+        value: 1
+      - key: PROOFRAIL_DB_POOL_MAX
+        value: 5
+      - key: PROOFRAIL_S3_BUCKET
+        sync: false
+      - key: PROOFRAIL_S3_ENDPOINT_URL
+        sync: false
+      - key: PROOFRAIL_S3_REGION
+        value: auto
+      - key: PROOFRAIL_S3_ACCESS_KEY_ID
+        sync: false
+      - key: PROOFRAIL_S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: PROOFRAIL_PROMETHEUS_METRICS
+        value: "1"
+      - key: PROOFRAIL_DEMO_MODE
+        value: "0"
+      - key: PROOFRAIL_RPM
+        value: "60"
+
+databases:
+  - name: proofrail-db
+    plan: free
+    databaseName: proofrail
+    user: proofrail
