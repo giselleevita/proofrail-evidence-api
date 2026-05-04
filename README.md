@@ -1,3 +1,9 @@
+[![CI](https://github.com/giselleevita/proofrail-evidence-api/actions/workflows/ci.yml/badge.svg)](https://github.com/giselleevita/proofrail-evidence-api/actions/workflows/ci.yml)
+[![Deploy](https://github.com/giselleevita/proofrail-evidence-api/actions/workflows/deploy.yml/badge.svg)](https://github.com/giselleevita/proofrail-evidence-api/actions/workflows/deploy.yml)
+![Version](https://img.shields.io/badge/version-1.0.0-green)
+![Python](https://img.shields.io/badge/python-3.12-blue)
+![License](https://img.shields.io/badge/license-proprietary-lightgrey)
+
 ## ProofRail Evidence API (SaaS core)
 
 FastAPI service for **audit-grade sanctions screening evidence packs**.
@@ -109,3 +115,9 @@ curl -sS -X POST "http://localhost:8000/v1/sanctions/screen" \
   - `DELETE /v2/webhooks/subscriptions/{subscription_id}`
 - Delivery runner (admin, cron-friendly):
   - `POST /v1/admin/webhooks/deliveries/run`
+
+### Deployment
+
+See [`docs/cloudflare-r2-setup.md`](docs/cloudflare-r2-setup.md) for storage setup and [`railway.env.example`](railway.env.example) for all environment variables.
+
+To deploy on Railway, set the `RAILWAY_TOKEN` secret in GitHub → Settings → Secrets → Actions, then push to `main`.
