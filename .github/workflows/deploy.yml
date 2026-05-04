@@ -12,7 +12,7 @@ jobs:
     # Only deploy on push to main (not PRs)
     if: github.event_name == 'push'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Railway CLI
         run: npm install -g @railway/cli
