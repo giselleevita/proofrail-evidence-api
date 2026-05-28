@@ -1,60 +1,68 @@
+# ProofRail Evidence API
+
 [![CI](https://github.com/giselleevita/proofrail-evidence-api/actions/workflows/ci.yml/badge.svg)](https://github.com/giselleevita/proofrail-evidence-api/actions/workflows/ci.yml)
 [![Deploy](https://github.com/giselleevita/proofrail-evidence-api/actions/workflows/deploy.yml/badge.svg)](https://github.com/giselleevita/proofrail-evidence-api/actions/workflows/deploy.yml)
 ![Version](https://img.shields.io/badge/version-1.0.0-green)
 ![Python](https://img.shields.io/badge/python-3.12-blue)
 ![License](https://img.shields.io/badge/license-proprietary-lightgrey)
 
-## ProofRail Evidence API (SaaS core)
+> FastAPI service for audit-grade sanctions screening evidence packs.
 
-FastAPI service for **audit-grade sanctions screening evidence packs**.
+ProofRail is an **evidence-first sanctions screening API** for fintech and crypto onboarding workflows.
 
-### What it does
+Most screening APIs return only a decision. ProofRail also returns **portable proof** of how that decision was reached — shareable with banking partners, auditors, and internal compliance review.
 
-ProofRail is an **evidence-first sanctions screening API** for fintech/crypto onboarding workflows.
+---
+
+## What It Does
 
 You send a subject (name + optional metadata) and get back:
 
 - **A decision**: `allow | block | review`
-- **An evidence pack id** (content-addressed) you can export as **JSON or auditor-ready PDF**
-- A **case workflow** (v2) so an analyst can record a decision and leave an append-only timeline
-- Optional **verifiable bundles**: a signed bundle containing the evidence pack + case timeline, plus a tamper-evident hash-chain over case events
+- **An evidence pack** (content-addressed, exportable as JSON or auditor-ready PDF)
+- **A case workflow** (v2): analyst records a decision with an append-only event timeline
+- **Verifiable bundles**: signed bundle containing evidence pack + case timeline + tamper-evident hash-chain
 
-### Why it matters
+---
 
-Most screening APIs return only a decision. ProofRail also returns the **portable proof** of how that decision was reached, so you can share it with:
+## Architecture
 
-- banking partners
-- auditors
-- internal compliance review
+```
+Client
+  ↓
+FastAPI (ProofRail/)
+  ↓
+Screening Engine → Sanctions Data Sources
+  ↓
+Evidence Pack Builder (content-addressed)
+  ↓
+Case Workflow (append-only timeline)
+  ↓
+Bundle Signer (key rotation support)
+  ↓
+Export: JSON | PDF
+```
 
-### Core artifacts
+---
 
-- **Evidence Pack**: deterministic JSON payload stored as a content hash; exportable as PDF.
-- **Case timeline**: append-only events (screening created, comments, assignment, review decision).
-- **Case bundle (v2)**: `{bundle, signature}` where `bundle` includes the evidence pack + case + chained events, and `signature` includes a `key_id` for key rotation.
+## Core Artifacts
 
-### UI (today)
+| Artifact | Description |
+|---|---|
+| Evidence Pack | Deterministic JSON payload stored as a content hash; exportable as PDF |
+| Case Timeline | Append-only events: screening created, comments, assignment, review decision |
+| Case Bundle | `{bundle, signature}` — evidence pack + case + chained events + `key_id` for rotation |
 
-There is no full product dashboard yet. For day-to-day exploration you can use:
+---
 
-- **Swagger**: `http://127.0.0.1:8000/docs`
-- **Analyst console** (static pilot UI, same-origin; stores the API key only in `sessionStorage`): `http://127.0.0.1:8000/console/`
-
-Treat `/console` like `/docs`: convenient for pilots, but protect or disable it at the edge if the API is exposed to untrusted networks.
-
-### Investor demo (recommended)
-
-For the deterministic offline investor demo (review workflow + PDF + verifiable bundle), use:
-
-- `INVESTOR_QUICKSTART.md`
-
-### Quickstart (venv)
+## Quick Start
 
 ```bash
+git clone https://github.com/giselleevita/proofrail-evidence-api
+cd proofrail-evidence-api
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -U pip
-python -m pip install -e ".[dev]"
+pip install -U pip && pip install -e ".[dev]"
 
 export PROOFRAIL_ADMIN_KEY="dev-admin"
 export PROOFRAIL_SIGNING_SECRET="dev-signing-secret"
@@ -63,61 +71,91 @@ export PROOFRAIL_SIGNING_KEY_CURRENT="k1"
 export PROOFRAIL_DB_PATH="./proofrail.db"
 export PROOFRAIL_STORE_DIR="./proofrail_store"
 
-proofrail-evidence-api --help
 proofrail-evidence-api
 ```
+
+Open:
+- `http://127.0.0.1:8000/docs` — Swagger UI
+- `http://127.0.0.1:8000/console/` — Analyst console (pilot UI)
 
 ### Docker
 
 ```bash
-export PROOFRAIL_ADMIN_KEY="change-me"
-export PROOFRAIL_SIGNING_SECRET="dev-signing-secret"
-export PROOFRAIL_SIGNING_KEYS="k1:dev-signing-secret"
-export PROOFRAIL_SIGNING_KEY_CURRENT="k1"
-export PROOFRAIL_DEMO_MODE="1"
-
+cp .env.example .env  # edit values
 docker compose up -d --build
 ```
 
-### Create an API key (admin)
+---
+
+## API Reference
+
+### v1 — Screening
 
 ```bash
+# Create API key (admin)
 curl -sS -X POST "http://localhost:8000/v1/admin/keys" \
   -H "x-admin-key: dev-admin" \
   -H "content-type: application/json" \
   -d '{"customer_id":"demo","scopes":["write:screen","read:evidence"]}'
-```
 
-### Screen a subject
-
-```bash
+# Screen a subject
 curl -sS -X POST "http://localhost:8000/v1/sanctions/screen" \
   -H "x-api-key: <paste-key>" \
   -H "content-type: application/json" \
   -d '{"subject":{"name":"John Doe","country":"US"}}'
 ```
 
-### v2 workflow (cases + bundle)
+### v2 — Cases + Bundles
 
-- Create screening: `POST /v2/screenings`
-- Case queue: `GET /v2/cases?status=needs_review`
-- Case detail: `GET /v2/cases/{case_id}`
-- Add case event: `POST /v2/cases/{case_id}/events`
-- Export evidence: `GET /v2/evidence-packs/{id}/export?format=pdf|json`
-- Verifiable case bundle: `GET /v2/cases/{case_id}/bundle`
-- Verify bundle: `POST /v2/cases/bundles/verify`
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/v2/screenings` | Create screening |
+| `GET` | `/v2/cases?status=needs_review` | Case queue |
+| `GET` | `/v2/cases/{case_id}` | Case detail |
+| `POST` | `/v2/cases/{case_id}/events` | Add case event |
+| `GET` | `/v2/evidence-packs/{id}/export?format=pdf\|json` | Export evidence |
+| `GET` | `/v2/cases/{case_id}/bundle` | Verifiable case bundle |
+| `POST` | `/v2/cases/bundles/verify` | Verify bundle integrity |
 
 ### Webhooks (v2)
 
-- Subscriptions:
-  - `POST /v2/webhooks/subscriptions`
-  - `GET /v2/webhooks/subscriptions`
-  - `DELETE /v2/webhooks/subscriptions/{subscription_id}`
-- Delivery runner (admin, cron-friendly):
-  - `POST /v1/admin/webhooks/deliveries/run`
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/v2/webhooks/subscriptions` | Create subscription |
+| `GET` | `/v2/webhooks/subscriptions` | List subscriptions |
+| `DELETE` | `/v2/webhooks/subscriptions/{id}` | Remove subscription |
+| `POST` | `/v1/admin/webhooks/deliveries/run` | Trigger delivery run |
 
-### Deployment
+---
 
-See [`docs/cloudflare-r2-setup.md`](docs/cloudflare-r2-setup.md) for storage setup and [`railway.env.example`](railway.env.example) for all environment variables.
+## Compliance
 
-To deploy on Railway, set the `RAILWAY_TOKEN` secret in GitHub → Settings → Secrets → Actions, then push to `main`.
+| Framework | Coverage |
+|---|---|
+| FATF Recommendations | Sanctions screening evidence and audit trail |
+| MiCA (EU) | Crypto asset transfer traceability |
+| GDPR | Append-only timeline, no data mutation |
+| SOC2 | Tamper-evident evidence packs, key rotation |
+
+---
+
+## Deployment
+
+See [`docs/cloudflare-r2-setup.md`](docs/cloudflare-r2-setup.md) for storage setup, [`railway.env.example`](railway.env.example) for all environment variables, and [`DEPLOYMENT.md`](DEPLOYMENT.md) for full deployment guide.
+
+To deploy on Railway: add `RAILWAY_TOKEN` to GitHub → Settings → Secrets → Actions, then push to `main`.
+
+---
+
+## Security
+
+- API keys scoped per customer with explicit permission grants
+- Signing keys support rotation via `key_id`
+- Analyst console (`/console`) should be disabled or protected at the edge in production
+- See [`SECRETS_SETUP.md`](SECRETS_SETUP.md) for all secret configuration
+
+---
+
+## License
+
+Proprietary. Contact for licensing terms.
