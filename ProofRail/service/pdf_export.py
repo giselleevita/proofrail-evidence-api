@@ -67,7 +67,7 @@ def render_evidence_pack_pdf(
     def safe_str(v: Any) -> str:
         if v is None:
             return ""
-        if isinstance(v, (str, int, float, bool)):
+        if isinstance(v, str | int | float | bool):
             return str(v)
         return str(v)
 

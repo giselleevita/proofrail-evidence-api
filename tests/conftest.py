@@ -1,7 +1,6 @@
 """Shared pytest fixtures for ProofRail Evidence API test suite."""
 
 import os
-import tempfile
 
 import pytest
 from fastapi.testclient import TestClient
