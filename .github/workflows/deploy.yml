@@ -14,16 +14,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Railway CLI
-        if: secrets.RAILWAY_TOKEN != ''
-        run: npm install -g @railway/cli
-
       - name: Deploy to Railway
-        if: secrets.RAILWAY_TOKEN != ''
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-        run: railway up --service proofrail-api --detach
-
-      - name: Skip deploy when Railway token is not configured
-        if: secrets.RAILWAY_TOKEN == ''
-        run: echo "RAILWAY_TOKEN is not configured; skipping Railway deploy."
+        run: |
+          if [ -z "$RAILWAY_TOKEN" ]; then
+            echo "RAILWAY_TOKEN is not configured; skipping Railway deploy."
+            exit 0
+          fi
+          npm install -g @railway/cli
+          railway up --service proofrail-api --detach
