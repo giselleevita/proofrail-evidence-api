@@ -27,22 +27,35 @@ ProofRail is built as a compliance evidence service, not a generic sanctions dem
 
 ---
 
+## Reviewer Quick Start
+
+For a fast technical review:
+
+1. Read the architecture and security controls below.
+2. Run `pytest` to verify the API, case workflow, bundle signing, and webhook behavior.
+3. Start the service locally and open `/docs` to inspect the v1 screening and v2 case APIs.
+4. Review [`DEPLOYMENT.md`](DEPLOYMENT.md), [`SECRETS_SETUP.md`](SECRETS_SETUP.md), and [`docs/compliance/`](docs/compliance/) for production posture.
+
+The key engineering signal is not just the screening endpoint. It is the full evidence lifecycle: scoped API keys, append-only case events, content-addressed evidence packs, signed bundles, key rotation, hardened deployment settings, and operational documentation.
+
+---
+
 ## Architecture
 
-```
-Client
-  ↓
-FastAPI (ProofRail/)
-  ↓
-Screening Engine → Sanctions Data Sources
-  ↓
-Evidence Pack Builder (content-addressed)
-  ↓
-Case Workflow (append-only timeline)
-  ↓
-Bundle Signer (key rotation support)
-  ↓
-Export: JSON | PDF
+```mermaid
+flowchart TD
+    Client[Client / Partner API] --> API[FastAPI service]
+    API --> Auth[Scoped API keys + rate limits]
+    Auth --> Screening[Screening engine]
+    Screening --> Sources[Sanctions data sources]
+    Screening --> Evidence[Content-addressed evidence pack]
+    Evidence --> Storage[S3-compatible evidence storage]
+    Screening --> Cases[Case workflow]
+    Cases --> Timeline[Append-only case timeline]
+    Timeline --> Bundle[Signed verifiable bundle]
+    Bundle --> Export[JSON / PDF export]
+    API --> Webhooks[Webhook delivery worker]
+    API --> Metrics[Health, readiness, metrics]
 ```
 
 ### Runtime Posture
