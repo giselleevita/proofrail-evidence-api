@@ -32,6 +32,7 @@ Optional:
 - `PROOFRAIL_DB_POOL_MIN="1"` / `PROOFRAIL_DB_POOL_MAX="20"` (Postgres connection pool sizes)
 - `PROOFRAIL_PROMETHEUS_METRICS="1"` — turns on Prometheus **gauge lines** on **`/metrics`** (the path always exists; when disabled it returns a short `# ... disabled` text stub)
 - `PROOFRAIL_METRICS_BEARER_TOKEN` — if set, **`/metrics`** requires `Authorization: Bearer <token>` (use in production instead of leaving the endpoint open)
+- `PROOFRAIL_ENABLE_CONSOLE="0"` — disables the bundled analyst console on public production API hosts. Keep it enabled only for local demos or behind edge auth/VPN.
 - **Docker Compose**: the default `proofrail` service and **`proofrail_pilot_api`** set `PROOFRAIL_PROMETHEUS_METRICS=1` so local smoke checks work; pilot API/worker also set explicit **`PROOFRAIL_DB_POOL_*`** when using Postgres
 - `PROOFRAIL_JOBS_RETENTION_DAYS="7"` (worker deletes old `done`/`failed` jobs)
 
@@ -85,9 +86,8 @@ curl -sS http://127.0.0.1:8001/v1/admin/metrics -H 'x-admin-key: change-me'
 
 ## Notes
 
-- The bundled **analyst console** is served at **`/console/`** (static files, no extra build step). If your API hostname is public, restrict **`/console`** the same way you would **`/docs`** (IP allow list, VPN, edge auth, or omit exposing that path).
+- The bundled **analyst console** is served at **`/console/`** when `PROOFRAIL_ENABLE_CONSOLE=1` (static files, no extra build step). For public API hosts, set `PROOFRAIL_ENABLE_CONSOLE=0` or restrict `/console` the same way you would `/docs` (IP allow list, VPN, or edge auth).
 - The default `docker compose up` still runs the SQLite + filesystem demo stack on port `8000`.
 - For pilots, use the Postgres + S3 stack (`--profile pilot`) so you don’t have to migrate data later.
 - For safe retries of write requests, send an `Idempotency-Key` header on `POST /v2/screenings`, `POST /v2/cases/{case_id}/events`, and `POST /v2/webhooks/subscriptions`.
 - For paging through list endpoints, use `limit` + `cursor` query params and the `x-next-cursor` response header on `GET /v2/cases` and `GET /v2/webhooks/subscriptions`.
-

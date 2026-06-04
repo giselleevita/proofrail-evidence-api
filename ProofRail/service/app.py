@@ -65,7 +65,7 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
     cfg = load_config()
     state = build_state(cfg)
 
-    app = FastAPI(title="ProofRail API", version="0.1.0")
+    app = FastAPI(title="ProofRail API", version="1.0.0")
     attach_lifespan(app, state)
     app.state.proofrail = state
 
@@ -1496,7 +1496,7 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
         lines: list[str] = []
         lines.append("# HELP proofrail_info ProofRail API process (static label).")
         lines.append("# TYPE proofrail_info gauge")
-        lines.append('proofrail_info{version="0.1.0"} 1')
+        lines.append('proofrail_info{version="1.0.0"} 1')
         try:
             qd = int(state.usage_queue.qsize())
         except Exception:
@@ -1532,7 +1532,7 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
         return Response(content=body, media_type="text/plain; version=0.0.4; charset=utf-8")
 
     _analyst_console_dir = Path(__file__).resolve().parent / "analyst_console"
-    if _analyst_console_dir.is_dir():
+    if state.cfg.enable_console and _analyst_console_dir.is_dir():
         app.mount(
             "/console",
             StaticFiles(directory=str(_analyst_console_dir), html=True),
