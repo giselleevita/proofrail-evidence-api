@@ -23,6 +23,8 @@ You send a subject (name + optional metadata) and get back:
 - **A case workflow** (v2): analyst records a decision with an append-only event timeline
 - **Verifiable bundles**: signed bundle containing evidence pack + case timeline + tamper-evident hash-chain
 
+ProofRail is built as a compliance evidence service, not a generic sanctions demo. The product goal is to make a screening decision explainable, reproducible, and exportable when a bank, auditor, or internal risk committee asks why a customer was allowed, blocked, or sent to review.
+
 ---
 
 ## Architecture
@@ -42,6 +44,17 @@ Bundle Signer (key rotation support)
   ↓
 Export: JSON | PDF
 ```
+
+### Runtime Posture
+
+| Layer | Production stance |
+|---|---|
+| API | FastAPI service with scoped API keys and per-key rate limits |
+| Database | Postgres for API keys, cases, idempotency, jobs, webhooks, and audit records |
+| Storage | S3-compatible object storage for evidence artifacts |
+| Worker | Background webhook delivery and retry processing |
+| Console | Disabled by default in Railway example; enable only for demos or behind edge auth |
+| Observability | `/healthz`, `/readyz`, optional Prometheus `/metrics`, admin metrics endpoint |
 
 ---
 
@@ -139,11 +152,32 @@ curl -sS -X POST "http://localhost:8000/v1/sanctions/screen" \
 
 ---
 
+## Security Controls
+
+- Scoped API keys: customer-bound keys with explicit scopes such as `write:screen`, `read:evidence`, and `write:cases`
+- Admin separation: management endpoints require `x-admin-key`
+- Pre-auth rate limiting: invalid-key probing is throttled before database key resolution
+- Idempotency: write endpoints support `Idempotency-Key` for safe retries
+- Evidence integrity: content-addressed evidence packs and signed v2 bundles
+- Key rotation: v2 bundle signatures include `key_id`
+- Console hardening: set `PROOFRAIL_ENABLE_CONSOLE=0` on public API hosts unless `/console` is protected by VPN, IP allow list, or edge auth
+- Metrics hardening: set `PROOFRAIL_METRICS_BEARER_TOKEN` before exposing `/metrics`
+
+---
+
 ## Deployment
 
 See [`docs/cloudflare-r2-setup.md`](docs/cloudflare-r2-setup.md) for storage setup, [`railway.env.example`](railway.env.example) for all environment variables, and [`DEPLOYMENT.md`](DEPLOYMENT.md) for full deployment guide.
 
 To deploy on Railway: add `RAILWAY_TOKEN` to GitHub → Settings → Secrets → Actions, then push to `main`.
+
+Production minimum:
+
+- Managed Postgres via `PROOFRAIL_DB_URL`
+- S3-compatible evidence storage via `PROOFRAIL_S3_*`
+- `PROOFRAIL_DEMO_MODE=0`
+- `PROOFRAIL_ENABLE_CONSOLE=0` unless console access is protected externally
+- Rotated signing keys with `PROOFRAIL_SIGNING_KEYS` and `PROOFRAIL_SIGNING_KEY_CURRENT`
 
 ---
 
@@ -151,7 +185,7 @@ To deploy on Railway: add `RAILWAY_TOKEN` to GitHub → Settings → Secrets →
 
 - API keys scoped per customer with explicit permission grants
 - Signing keys support rotation via `key_id`
-- Analyst console (`/console`) should be disabled or protected at the edge in production
+- Analyst console (`/console`) can be disabled with `PROOFRAIL_ENABLE_CONSOLE=0`
 - See [`SECRETS_SETUP.md`](SECRETS_SETUP.md) for all secret configuration
 
 ---

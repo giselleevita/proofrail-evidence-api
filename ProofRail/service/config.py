@@ -38,6 +38,7 @@ class AppConfig:
 
     max_request_bytes: int
 
+    enable_console: bool
     enable_prometheus_metrics: bool
     # If set, GET /metrics requires Authorization: Bearer <token> (constant-time compare).
     metrics_bearer_token: str | None
@@ -121,6 +122,11 @@ def load_config(environ: dict[str, str] | None = None) -> AppConfig:
     evidence_retention_days = int(env.get("PROOFRAIL_EVIDENCE_RETENTION_DAYS", "30"))
     jobs_retention_days = int(env.get("PROOFRAIL_JOBS_RETENTION_DAYS", "7"))
     max_request_bytes = int(env.get("PROOFRAIL_MAX_REQUEST_BYTES", "1000000"))
+    enable_console = env.get("PROOFRAIL_ENABLE_CONSOLE", "1").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
 
     enable_prometheus_metrics = env.get("PROOFRAIL_PROMETHEUS_METRICS", "").strip().lower() in (
         "1",
@@ -179,6 +185,7 @@ def load_config(environ: dict[str, str] | None = None) -> AppConfig:
         evidence_retention_days=evidence_retention_days,
         jobs_retention_days=jobs_retention_days,
         max_request_bytes=max_request_bytes,
+        enable_console=enable_console,
         enable_prometheus_metrics=enable_prometheus_metrics,
         metrics_bearer_token=metrics_bearer_token,
         db_pool_min=db_pool_min,
