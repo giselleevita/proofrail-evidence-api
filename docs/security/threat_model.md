@@ -48,6 +48,7 @@ flowchart TB
 | Evidence tamper at rest | Disk/object corruption or attacker with storage creds | `get_pack` verifies SHA256 vs `evidence_pack_id` | Storage account takeover |
 | Replay of mutating calls | Network retries duplicate side effects | Idempotency-Key on key POST routes | Clients not sending keys |
 | Webhook forgery | Attacker posts fake events to receiver | HMAC with per-subscription secret | Secret leakage |
+| Webhook SSRF | Compromised tenant registers webhook to internal metadata, loopback, or private service | HTTPS-only webhook URL validation; loopback/private/link-local/reserved IPs blocked at create and rechecked on delivery after DNS resolution; redirects disabled | Public endpoint compromise or DNS changes to another public IP |
 | Admin key brute force | Timing or online guessing | `hmac.compare_digest`; rate limit at edge | Offline if key weak |
 | Multi-tenant signing bleed | One secret signs all tenants | v2 keyed signing map; global v1 secret documented risk | Per-customer derived keys optional |
 | Queue stuck work | Worker crash mid-lease | Expired lease release in worker; stale lease metrics | Very long lease misconfiguration |
