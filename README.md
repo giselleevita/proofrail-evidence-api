@@ -173,6 +173,7 @@ curl -sS -X POST "http://localhost:8000/v1/sanctions/screen" \
 - Idempotency: write endpoints support `Idempotency-Key` for safe retries
 - Evidence integrity: content-addressed evidence packs and signed v2 bundles
 - Key rotation: v2 bundle signatures include `key_id`
+- Webhook SSRF guard: outbound webhook URLs must be HTTPS public endpoints and are revalidated before delivery
 - Console hardening: set `PROOFRAIL_ENABLE_CONSOLE=0` on public API hosts unless `/console` is protected by VPN, IP allow list, or edge auth
 - Metrics hardening: set `PROOFRAIL_METRICS_BEARER_TOKEN` before exposing `/metrics`
 

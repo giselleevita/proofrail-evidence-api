@@ -2,12 +2,18 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import ipaddress
 import json
+import socket
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
+
+_BLOCKED_HOSTS = {"localhost"}
+_BLOCKED_HOST_SUFFIXES = (".localhost", ".local", ".internal", ".lan")
 
 
 def utc_now_iso() -> str:
@@ -33,6 +39,97 @@ class DeliveryResult:
     error: str | None
 
 
+def _normalize_host(host: str) -> str:
+    try:
+        return host.encode("idna").decode("ascii").lower().rstrip(".")
+    except UnicodeError as exc:
+        raise ValueError("invalid_host") from exc
+
+
+def _is_public_ip(value: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return bool(ip.is_global)
+
+
+def _assert_public_resolved_addresses(host: str, port: int) -> None:
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except socket.gaierror as exc:
+        raise ValueError("dns_resolution_failed") from exc
+
+    resolved: set[str] = set()
+    for info in infos:
+        address = info[4][0]
+        resolved.add(address)
+        if not _is_public_ip(address):
+            raise ValueError("resolved_address_not_public")
+    if not resolved:
+        raise ValueError("dns_resolution_failed")
+
+
+def _format_netloc(host: str, port: int, *, include_port: bool) -> str:
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        host_part = host
+    else:
+        host_part = f"[{host}]" if ip.version == 6 else host
+    return f"{host_part}:{port}" if include_port else host_part
+
+
+def validate_webhook_url(url: str, *, resolve_dns: bool = False) -> str:
+    """
+    Validate outbound webhook targets against common SSRF paths.
+
+    Creation-time validation blocks obvious unsafe literals. Delivery-time
+    validation also resolves DNS so stored or rebinding-prone hostnames cannot
+    target loopback, private, link-local, multicast, or reserved addresses.
+    """
+    raw = (url or "").strip()
+    try:
+        parts = urlsplit(raw)
+    except ValueError as exc:
+        raise ValueError("invalid_url") from exc
+
+    if parts.scheme.lower() != "https":
+        raise ValueError("https_required")
+    if parts.username or parts.password:
+        raise ValueError("userinfo_not_allowed")
+    if not parts.hostname:
+        raise ValueError("host_required")
+    if parts.fragment:
+        raise ValueError("fragment_not_allowed")
+
+    host = _normalize_host(parts.hostname)
+    if host in _BLOCKED_HOSTS or host.endswith(_BLOCKED_HOST_SUFFIXES):
+        raise ValueError("host_not_allowed")
+    if _is_public_ip(host) is False:
+        try:
+            ipaddress.ip_address(host)
+        except ValueError:
+            pass
+        else:
+            raise ValueError("ip_address_not_public")
+
+    try:
+        port = parts.port
+    except ValueError as exc:
+        raise ValueError("invalid_port") from exc
+    if port is None:
+        port = 443
+    if port < 1 or port > 65535:
+        raise ValueError("invalid_port")
+
+    if resolve_dns:
+        _assert_public_resolved_addresses(host, port)
+
+    netloc = _format_netloc(host, port, include_port=parts.port is not None)
+    return urlunsplit(("https", netloc, parts.path or "/", parts.query, ""))
+
+
 def deliver_once(
     *,
     url: str,
@@ -42,6 +139,11 @@ def deliver_once(
     payload_json: str,
     timeout_s: float,
 ) -> DeliveryResult:
+    try:
+        target_url = validate_webhook_url(url, resolve_dns=True)
+    except ValueError:
+        return DeliveryResult(ok=False, status_code=None, error="webhook_url_not_allowed")
+
     body = payload_json.encode("utf-8")
     headers = {
         "content-type": "application/json",
@@ -52,7 +154,7 @@ def deliver_once(
     }
     try:
         with httpx.Client(timeout=timeout_s, follow_redirects=False) as client:
-            resp = client.post(url, content=body, headers=headers)
+            resp = client.post(target_url, content=body, headers=headers)
         ok = 200 <= int(resp.status_code) < 300
         return DeliveryResult(
             ok=ok, status_code=int(resp.status_code), error=None if ok else "http_error"
