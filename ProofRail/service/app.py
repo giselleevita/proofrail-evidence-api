@@ -58,7 +58,7 @@ from ProofRail.service.signing import sign_bytes, verify_bytes
 from ProofRail.service.state import attach_lifespan, build_state
 from ProofRail.service.storage import canonical_json_bytes, sha256_hex
 from ProofRail.service.utils import utc_now_iso
-from ProofRail.service.webhooks import build_event_payload
+from ProofRail.service.webhooks import build_event_payload, validate_webhook_url
 
 
 def create_app(*, ingest_func=ingest_sources) -> FastAPI:
@@ -1028,8 +1028,18 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
     ) -> V2WebhookSubscription:
         if "write:screen" not in principal.scopes:
             raise_http_error(status_code=403, code="missing_scope")
+        try:
+            webhook_url = validate_webhook_url(req.url, resolve_dns=False)
+        except ValueError as exc:
+            raise_http_error(
+                status_code=422,
+                code="webhook_url_not_allowed",
+                details={"reason": str(exc)},
+            )
         scope = _idempotency_scope(method="POST", path="/v2/webhooks/subscriptions")
-        request_sha = _idempotency_request_sha(req.model_dump())
+        request_body = req.model_dump()
+        request_body["url"] = webhook_url
+        request_sha = _idempotency_request_sha(request_body)
         cached = _idempotency_maybe_return(
             request=request,
             principal=principal,
@@ -1040,21 +1050,29 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
             return cached  # type: ignore[return-value]
         sub_id = sha256_hex(
             canonical_json_bytes(
-                {"customer_id": principal.customer_id, "url": req.url, "created_at": utc_now_iso()}
+                {
+                    "customer_id": principal.customer_id,
+                    "url": webhook_url,
+                    "created_at": utc_now_iso(),
+                }
             )
         )[:32]
         now = utc_now_iso()
         state.db.create_webhook_subscription(
             subscription_id=sub_id,
             customer_id=principal.customer_id,
-            url=req.url,
+            url=webhook_url,
             secret=req.secret,
             events=req.events,
             created_at=now,
             active=True,
         )
         resp = V2WebhookSubscription(
-            subscription_id=sub_id, url=req.url, events=req.events, active=True, created_at=now
+            subscription_id=sub_id,
+            url=webhook_url,
+            events=req.events,
+            active=True,
+            created_at=now,
         )
         _idempotency_store(
             request=request,
