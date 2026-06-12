@@ -12,6 +12,8 @@ ProofRail is an **evidence-first sanctions screening API** for fintech and crypt
 
 Most screening APIs return only a decision. ProofRail also returns **portable proof** of how that decision was reached — shareable with banking partners, auditors, and internal compliance review.
 
+![ProofRail analyst console showing review cases](docs/screenshots/analyst-console.png)
+
 ---
 
 ## What It Does
