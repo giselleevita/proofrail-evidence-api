@@ -8,8 +8,8 @@ version = "1.0.0"
 description = "Audit-grade sanctions screening evidence API."
 readme = "README.md"
 requires-python = ">=3.11"
-authors = [{ name = "ProofRail contributors" }]
-license = { text = "UNLICENSED" }
+authors = [{ name = "Giselle Evita Koch" }]
+license = { file = "LICENSE" }
 dependencies = [
   "requests>=2.31",
   # API service (SaaS core)
