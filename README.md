@@ -38,6 +38,9 @@ For a fast technical review:
 
 The key engineering signal is not just the screening endpoint. It is the full evidence lifecycle: scoped API keys, append-only case events, content-addressed evidence packs, signed bundles, key rotation, hardened deployment settings, and operational documentation.
 
+For component boundaries, trust boundaries, and production tradeoffs, see
+[`docs/architecture.md`](docs/architecture.md).
+
 ---
 
 ## Architecture
