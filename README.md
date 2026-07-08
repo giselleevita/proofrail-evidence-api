@@ -6,13 +6,25 @@
 ![Python](https://img.shields.io/badge/python-3.12-blue)
 ![License](https://img.shields.io/badge/license-proprietary-lightgrey)
 
-> FastAPI service for audit-grade sanctions screening evidence packs.
+> FastAPI service for producing signed, verifiable evidence bundles for compliance workflows.
 
-ProofRail is an **evidence-first sanctions screening API** for fintech and crypto onboarding workflows.
+**ProofRail** is an API for producing signed, verifiable evidence bundles for security and compliance workflows. It demonstrates how AI and security systems can produce audit-ready records instead of unverifiable logs.
 
-Most screening APIs return only a decision. ProofRail also returns **portable proof** of how that decision was reached — shareable with banking partners, auditors, and internal compliance review.
+Most screening and governance systems return only a decision. ProofRail also returns **portable proof** of how that decision was reached — shareable with banking partners, auditors, and internal compliance review.
 
 ![ProofRail analyst console showing review cases](docs/screenshots/analyst-console.png)
+
+---
+
+## Positioning
+
+| Layer | Project | Role |
+|---|---|---|
+| **Enforce** | [agent-security-gate](https://github.com/giselleevita/agent-security-gate) | Runtime tool-call policy gateway |
+| **Evaluate** | [vendor-red-team-passport](https://github.com/giselleevita/vendor-red-team-passport) | LLM vendor red-team reports |
+| **Govern** | [security-compliance-copilot](https://github.com/giselleevita/security-compliance-copilot) | Cited governance Q&A (not enforcement) |
+
+ProofRail is designed for systems where logs alone are not enough and decisions need to be independently verifiable.
 
 ---
 
