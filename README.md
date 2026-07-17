@@ -4,7 +4,7 @@
 [![Deploy](https://github.com/giselleevita/proofrail-evidence-api/actions/workflows/deploy.yml/badge.svg)](https://github.com/giselleevita/proofrail-evidence-api/actions/workflows/deploy.yml)
 ![Version](https://img.shields.io/badge/version-1.0.0-green)
 ![Python](https://img.shields.io/badge/python-3.12-blue)
-![License](https://img.shields.io/badge/license-proprietary-lightgrey)
+![License](https://img.shields.io/badge/license-Apache--2.0-green)
 
 > FastAPI service for producing signed, verifiable evidence bundles for compliance workflows.
 
@@ -223,5 +223,5 @@ Production minimum:
 
 ## License
 
-Copyright (c) 2026 Giselle Evita Koch. See [LICENSE](LICENSE) for the
-proprietary source-available terms.
+Copyright (c) 2026 Giselle Evita Koch. Licensed under the
+[Apache License 2.0](LICENSE).
