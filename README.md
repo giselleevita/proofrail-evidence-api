@@ -80,7 +80,7 @@ flowchart TD
 | Layer | Production stance |
 |---|---|
 | API | FastAPI service with scoped API keys and per-key rate limits |
-| Database | Postgres for API keys, cases, idempotency, jobs, webhooks, and audit records |
+| Database | SQLite (single-node) for API keys, cases, idempotency, jobs, webhooks, and audit records today; Postgres is the documented upgrade path for multi-instance production |
 | Storage | S3-compatible object storage for evidence artifacts |
 | Worker | Background webhook delivery and retry processing |
 | Console | Disabled by default in Railway example; enable only for demos or behind edge auth |
