@@ -176,7 +176,6 @@ curl -sS -X POST "http://localhost:8000/v1/sanctions/screen" \
 | Framework | Coverage |
 |---|---|
 | FATF Recommendations | Sanctions screening evidence and audit trail |
-| MiCA (EU) | Crypto asset transfer traceability |
 | GDPR | Append-only timeline, no data mutation |
 | SOC2 | Tamper-evident evidence packs, key rotation |
 
