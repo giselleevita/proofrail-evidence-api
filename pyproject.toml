@@ -13,7 +13,7 @@ license = { file = "LICENSE" }
 dependencies = [
   "requests>=2.31",
   # API service (SaaS core)
-  "fastapi>=0.112.0",
+  "fastapi>=0.112.0,<0.116",
   "uvicorn>=0.30.0",
   # Postgres backend (used when PROOFRAIL_DB_URL is set)
   "psycopg[binary]>=3.2.0",
@@ -34,7 +34,7 @@ dev = [
   "httpx>=0.27.0",
 ]
 api = [
-  "fastapi>=0.112.0",
+  "fastapi>=0.112.0,<0.116",
   "uvicorn>=0.30.0",
 ]
 
@@ -70,9 +70,6 @@ exclude = [
   ".venv",
   ".claude",
   "output",
-  "spike2_artifacts",
-  "tests/tmp_spike2",
-  "tmp",
 ]
 
 [tool.ruff.lint]

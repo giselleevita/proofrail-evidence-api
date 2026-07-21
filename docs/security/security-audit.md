@@ -1,3 +1,5 @@
+> **Point-in-time internal security audit.** This is a self-assessment snapshot, not a claim that every listed item is currently resolved. Findings are tracked and addressed on an ongoing basis.
+
 # ProofRail Evidence API — Practical Security Audit
 
 ## Executive summary
