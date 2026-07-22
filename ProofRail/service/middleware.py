@@ -157,7 +157,11 @@ def install_request_middleware(app, state: AppState) -> None:
         try:
             is_api = request.url.path.startswith("/v1/") or request.url.path.startswith("/v2/")
             is_admin = request.url.path.startswith("/v1/admin/")
-            if is_api and not is_admin:
+            # Ed25519 public keys are deliberately unauthenticated: they are not secrets,
+            # and requiring a credential to fetch them would defeat the purpose of letting
+            # a third party verify an evidence bundle independently.
+            is_public = request.url.path == "/v2/signing/public-keys"
+            if is_api and not is_admin and not is_public:
                 api_key = request.headers.get("x-api-key")
                 if not api_key:
                     anon_key = request.client.host if request.client else "unknown"

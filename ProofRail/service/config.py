@@ -18,6 +18,10 @@ class AppConfig:
     # v2+: key-id -> secret bytes
     signing_keys: Mapping[str, bytes]
     signing_key_current: str | None
+    # v2+: Ed25519 key-id -> 32-byte private seed. Preferred over HMAC for bundles
+    # because verification needs only the public key (third-party verifiable).
+    ed25519_keys: Mapping[str, bytes]
+    ed25519_key_current: str | None
 
     rpm: int
     # Per-IP limit before DB key resolution (mitigates invalid-key probing).
@@ -97,6 +101,36 @@ def load_config(environ: dict[str, str] | None = None) -> AppConfig:
     if signing_key_current is None and signing_keys:
         signing_key_current = next(iter(signing_keys.keys()))
 
+    # Ed25519 signing keys (v2 bundles). Format:
+    #   PROOFRAIL_ED25519_KEYS="k1:<64-hex-char private seed>,k2:<...>"
+    #   PROOFRAIL_ED25519_KEY_CURRENT="k2"
+    # Generate one with: python scripts/generate_signing_key.py
+    ed25519_keys_raw = env.get("PROOFRAIL_ED25519_KEYS", "").strip()
+    ed25519_keys: dict[str, bytes] = {}
+    if ed25519_keys_raw:
+        for part in ed25519_keys_raw.split(","):
+            part = part.strip()
+            if not part or ":" not in part:
+                continue
+            kid, seed_hex = part.split(":", 1)
+            kid = kid.strip()
+            seed_hex = seed_hex.strip()
+            if not kid or not seed_hex:
+                continue
+            try:
+                seed = bytes.fromhex(seed_hex)
+            except ValueError:
+                # Malformed seed: skip rather than start with an unusable key.
+                continue
+            if len(seed) == 32:
+                ed25519_keys[kid] = seed
+
+    ed25519_key_current = env.get("PROOFRAIL_ED25519_KEY_CURRENT")
+    if ed25519_key_current is not None:
+        ed25519_key_current = ed25519_key_current.strip() or None
+    if ed25519_key_current is None and ed25519_keys:
+        ed25519_key_current = next(iter(ed25519_keys.keys()))
+
     rpm = int(env.get("PROOFRAIL_RPM", "120"))
     preauth_rpm = int(env.get("PROOFRAIL_PREAUTH_RPM", "60"))
     ratelimit_max_buckets_raw = env.get("PROOFRAIL_RATELIMIT_MAX_BUCKETS", "50000").strip()
@@ -172,6 +206,8 @@ def load_config(environ: dict[str, str] | None = None) -> AppConfig:
         signing_secret=signing_secret,
         signing_keys=signing_keys,
         signing_key_current=signing_key_current,
+        ed25519_keys=ed25519_keys,
+        ed25519_key_current=ed25519_key_current,
         rpm=rpm,
         preauth_rpm=preauth_rpm,
         ratelimit_max_buckets=ratelimit_max_buckets,

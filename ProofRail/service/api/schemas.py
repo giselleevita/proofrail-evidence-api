@@ -232,6 +232,12 @@ class V2CaseEvidenceBundle(BaseModel):
 class V2CaseEvidenceBundleSignature(BaseModel):
     key_id: str
     signature: str
+    # Self-describing envelope so a recipient never has to guess the scheme.
+    # "ed25519" bundles are verifiable offline with public_key alone; "hmac-sha256"
+    # bundles are only tamper-evident inside the issuer's trust boundary.
+    algorithm: str = "hmac-sha256"
+    # Present for ed25519 so the bundle carries everything needed to verify it.
+    public_key: str | None = None
 
 
 class V2CaseEvidenceBundleResponse(BaseModel):
@@ -243,10 +249,22 @@ class V2VerifyCaseEvidenceBundleRequest(BaseModel):
     bundle: dict[str, Any]
     key_id: str
     signature: str
+    algorithm: str = "hmac-sha256"
 
 
 class V2VerifyCaseEvidenceBundleResponse(BaseModel):
     valid: bool
+    algorithm: str = "hmac-sha256"
+
+
+class V2SigningPublicKey(BaseModel):
+    key_id: str
+    algorithm: str
+    public_key: str
+
+
+class V2SigningPublicKeysResponse(BaseModel):
+    keys: list[V2SigningPublicKey]
 
 
 ERROR_RESPONSES = {

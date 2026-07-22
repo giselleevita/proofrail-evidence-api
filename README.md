@@ -35,9 +35,39 @@ You send a subject (name + optional metadata) and get back:
 - **A decision**: `allow | block | review`
 - **An evidence pack** (content-addressed, exportable as JSON or auditor-ready PDF)
 - **A case workflow** (v2): analyst records a decision with an append-only event timeline
-- **Verifiable bundles**: signed bundle containing evidence pack + case timeline + tamper-evident hash-chain
+- **Verifiable bundles**: **Ed25519-signed** bundle containing evidence pack + case timeline + tamper-evident hash-chain, verifiable offline by anyone holding only the public key
 
 ProofRail is built as a compliance evidence service, not a generic sanctions demo. The product goal is to make a screening decision explainable, reproducible, and exportable when a bank, auditor, or internal risk committee asks why a customer was allowed, blocked, or sent to review.
+
+---
+
+## How a third party verifies a bundle
+
+Bundles are signed with **Ed25519**, an asymmetric scheme. This is what makes them
+independently verifiable: a recipient verifies with the **public** key alone and never
+receives anything that would let them forge a bundle.
+
+```bash
+# 1. Issuer generates a keypair once; the private seed stays secret.
+python scripts/generate_signing_key.py --key-id k1
+
+# 2. Anyone can fetch the public keys — this endpoint needs no credential.
+curl https://<host>/v2/signing/public-keys
+
+# 3. The auditor verifies a saved bundle completely offline.
+#    No server call, no shared secret. Exit code 0 = verified.
+python scripts/verify_bundle.py --bundle bundle.json
+```
+
+The offline verifier checks both the Ed25519 signature and independently re-derives the
+case event hash-chain, so a reordered or mutated timeline is caught even in isolation.
+
+> **On the legacy HMAC path.** If only `PROOFRAIL_SIGNING_KEYS` is configured, bundles
+> fall back to HMAC-SHA256. HMAC is **symmetric**: verifying requires the issuer's shared
+> secret, and anyone holding that secret can also forge bundles. Such bundles are
+> tamper-evident *within the issuer's trust boundary* but are **not** independently
+> verifiable and provide no non-repudiation. Configure `PROOFRAIL_ED25519_KEYS` for any
+> bundle that will be shared externally.
 
 ---
 
