@@ -34,6 +34,8 @@ from ProofRail.service.api.schemas import (
     V2CreateWebhookSubscriptionRequest,
     V2ReviewDecisionRequest,
     V2ReviewDecisionResponse,
+    V2SigningPublicKey,
+    V2SigningPublicKeysResponse,
     V2VerifyCaseEvidenceBundleRequest,
     V2VerifyCaseEvidenceBundleResponse,
     V2WebhookSubscription,
@@ -54,7 +56,15 @@ from ProofRail.service.middleware import (
 from ProofRail.service.models import Decision
 from ProofRail.service.pdf_export import render_evidence_pack_pdf
 from ProofRail.service.screening import compute_screening_key, screen_subject_name
-from ProofRail.service.signing import sign_bytes, verify_bytes
+from ProofRail.service.signing import (
+    ALG_ED25519,
+    ALG_HMAC_SHA256,
+    ed25519_public_key_hex,
+    sign_bytes,
+    sign_ed25519,
+    verify_bytes,
+    verify_ed25519,
+)
 from ProofRail.service.state import attach_lifespan, build_state
 from ProofRail.service.storage import canonical_json_bytes, sha256_hex
 from ProofRail.service.utils import utc_now_iso
@@ -1198,15 +1208,35 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
             chain_head=head,
         )
 
+        payload = canonical_json_bytes(bundle.model_dump())
+
+        # Prefer Ed25519 when configured: the recipient can verify with the public key
+        # alone, which is what makes a bundle independently verifiable by a third party.
+        # HMAC remains as a back-compat fallback (tamper-evident, but not third-party
+        # verifiable — anyone who can verify it can also forge it).
+        ed_key_id = state.cfg.ed25519_key_current
+        if ed_key_id and ed_key_id in state.cfg.ed25519_keys:
+            seed = state.cfg.ed25519_keys[ed_key_id]
+            return V2CaseEvidenceBundleResponse(
+                bundle=bundle,
+                signature=V2CaseEvidenceBundleSignature(
+                    key_id=ed_key_id,
+                    signature=sign_ed25519(seed, payload),
+                    algorithm=ALG_ED25519,
+                    public_key=ed25519_public_key_hex(seed),
+                ),
+            )
+
         key_id = state.cfg.signing_key_current
         if not key_id or key_id not in state.cfg.signing_keys:
             raise_http_error(status_code=503, code="signing_not_configured")
         secret = state.cfg.signing_keys[key_id]
-        payload = canonical_json_bytes(bundle.model_dump())
         sig = sign_bytes(secret, payload)
         return V2CaseEvidenceBundleResponse(
             bundle=bundle,
-            signature=V2CaseEvidenceBundleSignature(key_id=key_id, signature=sig),
+            signature=V2CaseEvidenceBundleSignature(
+                key_id=key_id, signature=sig, algorithm=ALG_HMAC_SHA256
+            ),
         )
 
     @app.post(
@@ -1220,12 +1250,49 @@ def create_app(*, ingest_func=ingest_sources) -> FastAPI:
     ) -> V2VerifyCaseEvidenceBundleResponse:
         if "read:evidence" not in principal.scopes:
             raise_http_error(status_code=403, code="missing_scope")
+        payload = canonical_json_bytes(req.bundle)
+
+        if req.algorithm == ALG_ED25519:
+            seed = state.cfg.ed25519_keys.get(req.key_id)
+            if seed is None:
+                raise_http_error(status_code=404, code="signing_key_not_found")
+            return V2VerifyCaseEvidenceBundleResponse(
+                valid=verify_ed25519(
+                    ed25519_public_key_hex(seed), payload, req.signature
+                ),
+                algorithm=ALG_ED25519,
+            )
+
         secret = state.cfg.signing_keys.get(req.key_id)
         if secret is None:
             raise_http_error(status_code=404, code="signing_key_not_found")
-        payload = canonical_json_bytes(req.bundle)
         return V2VerifyCaseEvidenceBundleResponse(
-            valid=verify_bytes(secret, payload, req.signature)
+            valid=verify_bytes(secret, payload, req.signature),
+            algorithm=ALG_HMAC_SHA256,
+        )
+
+    @app.get(
+        "/v2/signing/public-keys",
+        response_model=V2SigningPublicKeysResponse,
+        responses=ERROR_RESPONSES,
+    )
+    def v2_signing_public_keys() -> V2SigningPublicKeysResponse:
+        """
+        Publish Ed25519 public keys so third parties can verify bundles offline.
+
+        Deliberately unauthenticated: public keys are not secrets, and requiring a
+        credential here would defeat the point of independent verification. HMAC keys
+        are never exposed.
+        """
+        return V2SigningPublicKeysResponse(
+            keys=[
+                V2SigningPublicKey(
+                    key_id=kid,
+                    algorithm=ALG_ED25519,
+                    public_key=ed25519_public_key_hex(seed),
+                )
+                for kid, seed in sorted(state.cfg.ed25519_keys.items())
+            ]
         )
 
     @app.get("/v2/cases", response_model=list[V2CaseSummary], responses=ERROR_RESPONSES)
